@@ -12,6 +12,9 @@ export const alertSnapshotSchema = z.strictObject({
   co: alertStateSchema,
   flame: alertStateSchema,
   buzzer_commanded_on: z.boolean(),
+  incident_ids: z
+    .strictObject({ gas: z.uuid().optional(), co: z.uuid().optional(), flame: z.uuid().optional() })
+    .optional(),
 });
 const gasSchema = z
   .strictObject({
@@ -113,4 +116,11 @@ export type DeviceView = {
   last_seen_at: string | null;
   status: 'online' | 'offline' | 'never_seen';
   latest: ReadingView | null;
+  location?: string;
+  description?: string;
+  archived_at?: string | null;
+  reporting_interval_ms?: number;
 };
+
+export * from './features.js';
+export * from './users.js';

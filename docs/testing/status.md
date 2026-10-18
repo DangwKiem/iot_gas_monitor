@@ -1,4 +1,4 @@
-# Trạng thái kiểm thử — lát cắt local đầu tiên
+# Trạng thái kiểm thử — phần mềm local v0.4
 
 ## Môi trường
 
@@ -7,7 +7,7 @@
 - PostgreSQL 17 trong container test riêng, password ngẫu nhiên cho mỗi lần chạy.
 - Prisma 7.10.1, Vitest 5.0.5; versions cụ thể còn lại được khóa trong package-lock.json.
 - Chromium do Playwright cài; browser tests không thay thế kiểm thử trên hardware.
-- Workspace không có Git repository/commit tại thời điểm triển khai.
+- Repository đã có baseline trên GitHub; thay đổi v0.2/v0.3 đang ở working tree, chưa tự commit/push.
 
 ## Những gì đã được kiểm tra
 
@@ -18,21 +18,32 @@
 - UI: login success/error, empty state không tạo số đo giả, nhãn simulator, invalid không biến thành zero, stale không biến thành dữ liệu mới.
 - Browser end-to-end thật: tạo simulator, cấp key, upload HTTP vào API thật, hiển thị sensor/chart, viewport 390 px không tràn ngang, logout xóa server session; không có pageerror trong luồng.
 - TypeScript strict, ESLint, Vite build và dependency audit.
+- Incident lifecycle: snapshot active/unknown/normal, concurrent retry, acknowledgement có role/user/time và không tắt còi, delayed snapshot không mở lại; event ended-before-started, dedup/identity conflict, liên kết snapshot/event bằng incident UUID, boot conflict rollback.
+- Device management: metadata và source bất biến, key list/cursor/expiry/revoke/rotation overlap, config version locking + hash/ETag/ACK, simulator tự nhận cấu hình, heartbeat không giả sensor, archive/restore và audit/status history.
+- Analytics/export: thời gian [from,to), cursor, valid/invalid count và null stats, so sánh kỳ trước, mixed ADC resolution bị chặn, CSV giữ source/quality/timestamps và chống formula injection; UI không nối qua bucket thiếu mẫu.
+- Browser: timeline/ack/end refetch, tải CSV thật, lưu config và nhận ACK, rotation key và archive/restore.
+- Accounts: admin tạo/list/role/lock, self-service email/password bằng current password, revoke sessions/socket, chặn tự khóa/hạ quyền, duplicate email/weak password và audit không có secrets; browser kiểm tra viewer không thấy admin navigation.
+- Retention: dry-run không ghi/xóa, raw→minute/hour transaction và rerun không double-count, giữ latest, weighted average + invalid counts, không xuất CSV thiếu khi raw đã tổng hợp, partial bucket bị từ chối; audit/status hết hạn bị dọn nhưng giữ incident evidence.
+- Backup: mã hóa/xác thực, sai passphrase hoặc sửa ciphertext bị từ chối; PostgreSQL custom dump/restore vào DB trống riêng có fixture/schema, thu hồi sessions, từ chối restore đè.
+- CSV limit: tạo 100.001 raw rows trong DB test, xác nhận trả JSON 413 trước khi stream file.
 
 ## Lệnh tái chạy
 
 Kết quả lần xác minh local:
 
-| Lệnh                       | Kết quả                                                                      |
-| -------------------------- | ---------------------------------------------------------------------------- |
-| `npm test`                 | 31 pass, 24 skip do cần runner DB/browser                                    |
-| `npm run test:integration` | 34 pass, gồm API/Socket/session với PostgreSQL thật và config/logging/Origin |
-| `npm run test:e2e`         | 1 pass trong Chromium thật                                                   |
-| `npm run lint`             | Pass                                                                         |
-| `npm run build`            | Typecheck + frontend build pass                                              |
-| `npm audit`                | 0 vulnerabilities được báo tại thời điểm chạy                                |
+| Lệnh                       | Kết quả                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `npm test`                 | 39 pass, 69 skip do cần runner DB/browser/load                              |
+| `npm run test:integration` | 80 pass với PostgreSQL thật, gồm Telegram/outbox và encrypted restore drill |
+| `npm run test:e2e`         | 3 pass trong Chromium thật                                                  |
+| `npm run test:load`        | 1 pass; 60 giây, 10 simulator/5 Chromium pages, 120/120 mẫu, 120 rows       |
+| `npm run lint`             | Pass                                                                        |
+| `npm run build`            | Typecheck + frontend build pass                                             |
+| `npm audit`                | 0 vulnerabilities được báo tại thời điểm chạy                               |
 
-Các suite config/logging chạy lại ở nhiều lệnh; không cộng tổng các lần chạy thành số test độc lập.
+Các suite config/logging chạy lại ở nhiều lệnh; không cộng tổng các lần chạy thành số test độc lập. Load report local `reports/load-1792312816146.json`: ingestion P95 533,86 ms; request → DOM warm P95 771,20 ms. Chỉ 120 mẫu/60 giây, chưa phải AC02 ≥1000 updates hoặc bài 30 phút/24 giờ. Timing bắt đầu trước HTTP request, là upper bound bảo thủ chứ không phải timestamp DB commit chính xác. Memory chỉ đo Node, không suy thành chứng minh không leak toàn hệ thống.
+
+Simulator danger: unit test kiểm tra ranh giới pha normal/active/recovery và vòng lặp, retry ổn định, gas raw/PPM null; integration dùng payload thật để tạo ba incident có source simulator, retry không nhân đôi và normal đóng đủ ba incident (sáu transition events). Đã quan sát cả unit và integration fail trước khi thêm kịch bản. E2E phía trên là lần kiểm tra giao diện v0.2; không chạy lại browser riêng cho CLI danger.
 
 ```powershell
 npm run db:generate
@@ -40,6 +51,7 @@ npm test
 npm run test:integration
 npx playwright install chromium
 npm run test:e2e
+npm run test:load
 npm run lint
 npm run build
 npm run format:check
@@ -52,9 +64,10 @@ Các kiểm thử được viết và quan sát fail trước phần implementat
 
 ## Chưa kiểm tra / chưa đạt cổng nghiệm thu đầy đủ
 
-- Chưa chạy 60 phút telemetry, 24 giờ soak, tải 10 thiết bị/5 browser hoặc đo percentile latency theo AC.
-- Chưa chạy backup/restore drill, retention/rollup hoặc deployment smoke ngoài LAN.
-- Chưa có incident history/acknowledgement, analytics/export, heartbeat/config workflow hoặc quản lý tài khoản đầy đủ để kiểm thử.
+- Chưa chạy đủ 60 phút telemetry, 30 phút tải 10 thiết bị/5 browser, 24 giờ soak hoặc ≥1000 UI updates theo AC; hiện chỉ có smoke 60 giây và runner để tái chạy các bài dài.
+- Chưa đo RPO/RTO bằng lịch backup thực tế, backup offsite hoặc deployment smoke ngoài LAN. Drill backup/restore local đã chạy; không suy thành SLA vận hành.
+- Đã thử chặn vượt 100.000 CSV rows, chưa đo throughput/memory xuất đúng 100.000 dòng hoặc range 90 ngày đầy tải; sự cố dài hạn qua nhiều boot chưa được soak.
+- Workflow CI đã có nhưng chưa push/chạy trên GitHub. Scheduler OS, backup rotation và phân trang config trên 100 phiên bản gần nhất chưa tự triển khai.
 - Chưa có firmware, wiring, heater, calibration, sensor integration, cảnh báo cục bộ hoặc hardware-in-the-loop.
 - Chưa triển khai hoặc kiểm thử cloud. Không suy diễn availability/SLA từ test local.
 
@@ -67,3 +80,19 @@ Các kiểm thử được viết và quan sát fail trước phần implementat
 - Không thay đổi hoặc reset database development; kiểm thử DB/browser vẫn dùng container riêng.
 
 Đây là bằng chứng cho lát cắt đầu tiên, không phải tuyên bố hoàn thành toàn bộ PLAN.md.
+
+## Regression realtime phát hiện qua load runner
+
+- Quan sát load fail: socket connected nhưng UI mất khoảng 5 giây vì frontend devices.subscribe không truyền ACK callback, server bỏ qua subscription.
+- Sau sửa ACK, burst invalidations từ 10 thiết bị tạo quá nhiều refetch; bổ sung batcher 250 ms, coalesce query keys, không starvation khi event liên tục và hủy timer khi disconnect/unmount. Unit batcher đã fail trước implementation.
+- Runner kiểm tra đủ 5 browser join room thiết bị, sau đó đo cập nhật DOM thật với polling 50 ms (không phụ thuộc rAF của tab nền). Không nới ngưỡng 1 giây ingestion / 2 giây UI để làm test pass.
+- Chromium E2E chạy lại 3 pass sau thay đổi; load 60 giây pass. Có các report fail cũ trong thư mục ignored reports để đối chiếu.
+- Migration operations đã áp dụng vào DB local, không reset dữ liệu. Chỉ chạy maintenance dry-run ở DB development; apply/delete chỉ được kiểm thử trong DB test biệt lập.
+
+## Telegram notifications v0.4
+
+- Đã quan sát tests fail trước implementation: config opt-in/credentials, plain text POST đúng API, retry_after và lỗi network không lộ token; queue incident/severity, escalation, concurrent lease/reclaim và backoff.
+- PostgreSQL kiểm tra rollback outbox sau khi một condition khác conflict, retry telemetry/event không nhân job, simulator filter, hết TTL, lỗi 403/exhausted attempts ngừng retry, tắt include-simulator skip pending cũ.
+- Encrypted restore drill kiểm tra pending/sending outbox khôi phục bị đánh dấu RESTORE_REVIEW_REQUIRED, tránh phát lại backup.
+- Transport tests dùng fake HTTP responses cho Telegram để không gửi tin ngoài ý muốn; database/transaction/lease là PostgreSQL thật, có cả physical-device fixture để kiểm tra lọc simulator không chặn thiết bị thật. **Chưa kiểm tra gửi tới Telegram bot/chat thật**; cần cấu hình credentials người dùng. Không coi 80 pass là Telegram đã giao tin thành công.
+- Migration Telegram đã áp dụng vào DB local, giữ nguyên dữ liệu. Mặc định tính năng tắt cho tới khi bật và điền environment; không đưa token/chat ID vào source hoặc log.

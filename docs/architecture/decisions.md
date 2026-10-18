@@ -31,16 +31,39 @@ Logout chỉ hiển thị thành công khi server thu hồi phiên, hoặc phiê
 - `telemetry.created` là sự kiện invalidation sau commit: envelope version/event_id/type/emitted_at/device_id; `data.refetch=true`. Không cam kết chuyển phát bền.
 - Browser refetch snapshot/history sau reconnect và polling định kỳ.
 - Logout xóa session trong DB và ngắt sockets của session; socket tự ngắt khi hết hạn.
-- Online/offline tính từ last_seen ở mỗi GET, polling 5 giây. Chưa có status history/job phát sự kiện presence.
+- Online/offline theo last_seen và max(30 giây, 3 × chu kỳ đã applied). Reconciler mỗi 5 giây và GET danh sách ghi durable status history; hiệu lực timeout và lúc phát hiện được lưu riêng.
+- Alert/device/config events cũng là invalidation sau commit. Acknowledge chỉ lưu danh tính/thời gian/ghi chú, không sửa telemetry, không gửi lệnh tắt còi.
+
+## Bổ sung local v0.2
+
+- Migration thứ hai thêm incident/event/state/ack, config versions/ACK, key expiry/rotation metadata, device metadata/archive, status history và audit; không xóa dữ liệu cũ. Backfill immutable config v1 (5 giây) cho thiết bị hiện có.
+- Snapshot mới tạo/kết thúc incident theo boot/sequence; lỗi sensor/unknown/offline không đóng incident. Durable events dùng stable incident_id/event_id, transaction và dedup; hỗ trợ ended đến trước started. Snapshot và event liên kết bằng incident_ids; không đoán khi identity mơ hồ.
+- Cấu hình chỉ cho phép chu kỳ gửi 1–60 giây, không safety controls. expected_version tránh lost update, hash/ETag phục vụ thiết bị, applied ACK độc lập desired. Simulator tích hợp tải/verify/ACK.
+- Metadata/archive và key/config mutations chỉ admin; operator/admin acknowledge; viewer chỉ đọc. Key secret trả một lần, expiry/revoke kiểm tra mỗi request. Archive giữ lịch sử nhưng chặn device transport.
+- Analytics/CSV dùng SQL aggregation và snapshot transaction, một device mỗi request; ADC mixed bit bị chặn. Khoảng [from,to) tối đa 90 ngày, chart khoảng 2000 điểm, CSV 100.000 dòng stream theo chunk, chống formula injection. Chỉ tính mẫu valid/uncalibrated có giá trị; không công bố PPM/AQI.
+- Chi tiết giao thức, giới hạn và workflow tại [monitoring API](../api/monitoring.md).
 
 ## Các hạng mục chưa hoàn thành
 
-- Alert incident/event history, acknowledgement, audit và status history.
-- Heartbeat/config endpoints, config version workflow.
-- Credential list/expiry và UI quản trị key đầy đủ (API revoke key đã có).
-- Analytics theo khoảng thời gian, CSV và aggregation/retention jobs.
-- User management ngoài admin bootstrap, đổi mật khẩu.
-- OpenAPI chi tiết cho toàn bộ roadmap, backup/restore automation, CI.
+- Phân trang lịch sử config trên 100 phiên bản gần nhất.
+- Lịch backup/maintenance ngoài OS, backup offsite và rotation theo chính sách vận hành; code công cụ local đã có, không tự cài lịch hoặc xóa backup.
 - HIL, tải/soak dài hạn, firmware và cloud.
 
-Dashboard cảnh báo hiện tại chỉ hiển thị snapshot và ghi rõ có thể là dữ liệu cũ; không giả lịch sử hay nút acknowledge chưa được triển khai.
+Incident history không thay thế snapshot mới nhất: cả hai đều phân biệt dữ liệu mô phỏng và trạng thái có thể cũ. Chưa nghiệm thu policy/threshold gas/CO cho phần cứng.
+
+## Bổ sung local v0.3
+
+- Admin quản lý tài khoản, tất cả roles có đổi email/mật khẩu bằng reauthentication. Khóa/role/reset thu hồi sessions và sockets; login khóa row user và kiểm tra lại password hash/email/active trước khi tạo phiên. Advisory lock tuần tự hóa thay đổi admin; không tự khóa/hạ quyền hoặc mất admin cuối.
+- Audit được khái quát resource_type/resource_id, device_id có thể null cho user/maintenance; có UI admin và cursor. Không ghi bí mật.
+- Retention explicit CLI mặc định dry-run; apply yêu cầu backup xác thực cùng DB ≤24 giờ. Delete raw + cộng rollup trong cùng transaction; chỉ aggregate row thực sự bị xóa và giữ latest. Phút/giờ tách time basis, metric, ADC bit; analytics weighted sum/count không double-count và từ chối bucket một phần. Không sửa diễn giải gas/CO.
+- Raw 14 ngày, phút 90 ngày, giờ 365 ngày, audit 180 ngày, status 365 ngày khi apply. **Quyết định an toàn:** incident/event/ack chưa tự purge, giữ lâu hơn mức tối thiểu dự kiến trong PLAN. Không tự cài scheduler hoặc backup rotation.
+- Backup stream mã hóa AES-256-GCM/scrypt; header authenticated, xác minh trước restore, chỉ restore DB trống riêng và thu hồi web sessions khôi phục. CI có checks/test/restore drill/load smoke, không deploy.
+- Regression realtime: frontend phải gửi ACK callback cho devices.subscribe, đúng hợp đồng server. Có kết nối socket nhưng không join room sẽ chỉ còn REST polling; load test kiểm tra room subscription và giá trị DOM cập nhật.
+
+## Telegram opt-in v0.4
+
+- Bổ sung theo yêu cầu người dùng: warning/critical notifications qua Telegram. Chỉ backend giữ token/chat ID trong environment; không mở webhook, không gửi secrets ra browser hoặc log.
+- Transactional PostgreSQL outbox unique incident/severity; enqueue cùng incident và chỉ worker đọc sau commit. Telegram không nằm trong đường HTTP ACK ingestion. Không gửi mỗi sample, không gửi khi acknowledge/phục hồi đơn thuần; không đổi ngưỡng/severity phần cứng.
+- Mặc định tắt, simulator mặc định bị loại. Khi bật gửi simulator, plain text có nhãn MÔ PHỎNG và dữ liệu chưa hiệu chuẩn; tắt lại sẽ skip pending simulator jobs.
+- Worker có lease/reclaim, bounded retry/backoff/429 retry_after, timeout và TTL. Best effort at-least-once: Telegram sendMessage không có idempotency key, vẫn có thể trùng nếu mất ACK hoặc crash sau khi đã gửi.
+- Restore đánh dấu pending/sending jobs `RESTORE_REVIEW_REQUIRED` để không phát lại backup cũ. Xem [runbook](../operations/local-runbook.md#telegram-warningcritical). Chưa xác nhận gửi Telegram thật khi chưa cấu hình bot/chat của người dùng.

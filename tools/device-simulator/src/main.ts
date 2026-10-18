@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
+import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { buildPayload } from './payload.js';
+import { syncSimulatorConfig, type SimulatorConfig } from './config.js';
 
+const { values } = parseArgs({ options: { scenario: { type: 'string', default: 'normal' } } });
+const scenario = z.enum(['normal', 'danger']).parse(values.scenario);
 const input = z
   .object({
     SIM_DEVICE_ID: z.uuid(),
@@ -29,8 +33,22 @@ process.on('SIGTERM', () => {
   running = false;
 });
 console.log('SIMULATOR — dữ liệu mô phỏng, không phải số đo phần cứng. Ctrl+C để dừng.');
+if (scenario === 'danger') {
+  console.log(
+    'KỊCH BẢN NGUY HIỂM GIẢ LẬP: mẫu 1–2 bình thường, 3–6 Gas/CO/Flame active + còi mô phỏng, 7–10 phục hồi; lặp lại. Không phải ngưỡng gas đã hiệu chuẩn.',
+  );
+}
 let seq = 0n;
+let config: SimulatorConfig = { version: 1, intervalMs: input.SIM_INTERVAL_MS };
 while (running) {
+  try {
+    const next = await syncSimulatorConfig(apiUrl, input.SIM_DEVICE_KEY, config);
+    if (next.etag !== config.etag)
+      console.log(`Cấu hình mô phỏng v${next.version}: chu kỳ ${next.intervalMs} ms.`);
+    config = next;
+  } catch {
+    console.warn('Chưa đồng bộ được cấu hình; giữ chu kỳ hiện tại và thử lại ở vòng sau.');
+  }
   const payload = buildPayload({
     deviceId: input.SIM_DEVICE_ID,
     bootId,
@@ -38,7 +56,9 @@ while (running) {
     seq: String(++seq),
     uptime: Math.floor(performance.now() - started),
     now: new Date(),
+    scenario,
   });
+  payload.readings[0]!.config_version = config.version;
   let backoff = 1000;
   while (running) {
     try {
@@ -52,7 +72,10 @@ while (running) {
         signal: AbortSignal.timeout(10000),
       });
       if (response.ok) {
-        console.log(`Đã nhận mẫu mô phỏng seq=${seq}`);
+        const alert = payload.readings[0]!.alert_snapshot;
+        console.log(
+          `Đã nhận mẫu mô phỏng seq=${seq} · Gas=${alert.gas}, CO=${alert.co}, Flame=${alert.flame}, còi mô phỏng=${alert.buzzer_commanded_on ? 'BẬT' : 'TẮT'}`,
+        );
         break;
       }
       if (response.status >= 400 && response.status < 500 && response.status !== 429)
@@ -67,5 +90,5 @@ while (running) {
     // Keep immutable reading identity/content; update only transmission metadata on retry.
     payload.transmission.sent_uptime_ms = String(Math.floor(performance.now() - started));
   }
-  if (running) await setTimeout(input.SIM_INTERVAL_MS);
+  if (running) await setTimeout(config.intervalMs);
 }

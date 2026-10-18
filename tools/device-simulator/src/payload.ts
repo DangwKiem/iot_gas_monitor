@@ -7,7 +7,13 @@ export function buildPayload(options: {
   seq: string;
   uptime: number;
   now: Date;
+  scenario?: 'normal' | 'danger';
 }): Telemetry {
+  // Scripted demonstration only: never infer hazard or PPM from ADC values.
+  // Ten-sample cycle: 1–2 normal, 3–6 active, 7–10 recovered.
+  const phase = Number((BigInt(options.seq) - 1n) % 10n) + 1;
+  const dangerScenario = options.scenario === 'danger';
+  const active = dangerScenario && phase >= 3 && phase <= 6;
   const wave = Math.sin(Number(BigInt(options.seq) % 100n) / 10);
   const gas = (adc: number) => ({
     adc_raw: adc,
@@ -44,13 +50,13 @@ export function buildPayload(options: {
           },
           mq2: gas(Math.round(1200 + 100 * wave)),
           mq7: { ...gas(Math.round(900 + 80 * wave)), heater_control: 'unverified' },
-          flame: { detected: false, quality: 'valid', age_ms: 0 },
+          flame: { detected: active, quality: 'valid', age_ms: 0 },
         },
         alert_snapshot: {
-          gas: 'not_configured',
-          co: 'not_configured',
-          flame: 'normal',
-          buzzer_commanded_on: false,
+          gas: dangerScenario ? (active ? 'active' : 'normal') : 'not_configured',
+          co: dangerScenario ? (active ? 'active' : 'normal') : 'not_configured',
+          flame: active ? 'active' : 'normal',
+          buzzer_commanded_on: active,
         },
       },
     ],

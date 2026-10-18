@@ -7,6 +7,7 @@ export default defineConfig({
       'apps/**/*.test.{ts,tsx}',
       'tools/**/*.test.ts',
       'tests/e2e/**/*.test.ts',
+      'tests/performance/**/*.test.ts',
     ],
     testTimeout: 15000,
     hookTimeout: 30000,

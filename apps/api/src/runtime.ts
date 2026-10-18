@@ -5,6 +5,9 @@ import { createApp } from './app.js';
 import { authenticateUser } from './modules/auth.js';
 import { z } from 'zod';
 import { allowedWebOrigins } from './lib/origins.js';
+import { reconcileOffline } from './modules/presence.js';
+import { telegramNotifier, startTelegramWorker } from './modules/notifications.js';
+import type { TelegramConfig } from './modules/telegram-client.js';
 
 export function createRuntime(
   db: Database,
@@ -13,12 +16,19 @@ export function createRuntime(
     onRequest?: (entry: { request_id: string; method: string; status: number }) => void;
     onFailure?: (entry: { request_id: string; code: string }) => void;
     secureCookies?: boolean;
+    telegram?: TelegramConfig;
+    onNotification?: (entry: {
+      notification_id?: string;
+      status?: string;
+      code?: string | null;
+    }) => void;
   } = {},
 ) {
   const app = createApp({
     db,
     origin,
     ...logging,
+    notify: logging.telegram ? telegramNotifier(logging.telegram.includeSimulators) : undefined,
     onTelemetry: (deviceId) =>
       io
         .of('/monitoring')
@@ -33,6 +43,7 @@ export function createRuntime(
         }),
     onLogout: (sessionId) =>
       io.of('/monitoring').in(`session:${sessionId}`).disconnectSockets(true),
+    onEvent: (type, deviceId) => publish(type, deviceId),
   });
   const http = createServer(app);
   const origins = allowedWebOrigins(origin);
@@ -43,6 +54,42 @@ export function createRuntime(
       done(null, !req.headers.origin || origins.includes(req.headers.origin)),
   });
   const namespace = io.of('/monitoring');
+  function publish(type: string, deviceId: string) {
+    const audience = type === 'device.updated' ? namespace : namespace.to(`device:${deviceId}`);
+    audience.emit(type, {
+      version: 1,
+      event_id: crypto.randomUUID(),
+      type,
+      emitted_at: new Date().toISOString(),
+      device_id: deviceId,
+      data: { refetch: true },
+    });
+  }
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let stopWorker: (() => Promise<void>) | undefined;
+  let reconciling = false;
+  async function reconcile() {
+    if (reconciling) return;
+    reconciling = true;
+    try {
+      for (const id of await reconcileOffline(db)) publish('device.status.changed', id);
+    } catch {
+      logging.onFailure?.({ request_id: 'presence', code: 'PRESENCE_RECONCILE_FAILED' });
+    } finally {
+      reconciling = false;
+    }
+  }
+  http.on('listening', () => {
+    if (logging.telegram)
+      stopWorker = startTelegramWorker(db, logging.telegram, logging.onNotification ?? (() => {}));
+    timer = setInterval(() => void reconcile(), 5000);
+    timer.unref();
+    void reconcile();
+  });
+  http.on('close', () => {
+    if (timer) clearInterval(timer);
+    void stopWorker?.();
+  });
   namespace.use(async (socket, next) => {
     try {
       socket.data.session = await authenticateUser(db, undefined, socket.request.headers.cookie);
@@ -88,5 +135,12 @@ export function createRuntime(
         for (const id of parsed.data.device_ids) void socket.leave(`device:${id}`);
     });
   });
-  return { app, http, io };
+  return {
+    app,
+    http,
+    io,
+    stopNotifications: async () => {
+      await stopWorker?.();
+    },
+  };
 }

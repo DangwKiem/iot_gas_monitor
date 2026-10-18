@@ -45,8 +45,17 @@ export async function authenticateUser(
 export async function authenticateDevice(db: Database, authorization: string | undefined) {
   const match = authorization?.match(/^DeviceKey ([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{43})$/);
   if (!match) throw new ApiError(401, 'INVALID_DEVICE_KEY', 'Credential thiết bị không hợp lệ.');
-  const key = await db.deviceCredential.findUnique({ where: { keyId: match[1] } });
-  if (!key || key.revokedAt || !matchesSecret(match[2]!, key.secretHash))
+  const key = await db.deviceCredential.findUnique({
+    where: { keyId: match[1] },
+    include: { device: true },
+  });
+  if (
+    !key ||
+    key.revokedAt ||
+    (key.expiresAt && key.expiresAt <= new Date()) ||
+    !matchesSecret(match[2]!, key.secretHash)
+  )
     throw new ApiError(401, 'INVALID_DEVICE_KEY', 'Credential thiết bị không hợp lệ.');
+  if (key.device.archivedAt) throw new ApiError(403, 'DEVICE_ARCHIVED', 'Thiết bị đang lưu trữ.');
   return key;
 }

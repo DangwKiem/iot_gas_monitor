@@ -46,7 +46,11 @@ try {
     [
       'node_modules/vitest/vitest.mjs',
       'run',
-      process.argv.includes('--browser') ? 'tests/e2e' : 'apps/api/tests',
+      process.argv.includes('--browser')
+        ? 'tests/e2e'
+        : process.argv.includes('--load')
+          ? 'tests/performance'
+          : 'apps/api/tests',
     ],
     env,
   );

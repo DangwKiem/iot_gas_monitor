@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createDatabase } from '@iot/database';
 import { createRuntime } from '../../apps/api/src/runtime.js';
 import { buildPayload } from '../../tools/device-simulator/src/payload.js';
+import { readFile } from 'node:fs/promises';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL', () => {
   const db = createDatabase(process.env.TEST_DATABASE_URL ?? 'postgresql://localhost/iot_test');
@@ -17,6 +18,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
   let browser: Browser;
   let origin: string;
   let apiUrl: string;
+  let simulatorId: string;
+  let simulatorKey: string;
+  let simulatorBootId: string;
   beforeAll(async () => {
     // Reserve an available local web port, then require Vite to bind exactly it.
     const reservation = createPortServer();
@@ -81,9 +85,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     const keyPanel = page.getByRole('region', { name: 'Credential mới' });
     const key = await keyPanel.locator('code').first().innerText();
     const device = await db.device.findFirstOrThrow({ where: { name: 'Browser simulator' } });
+    simulatorId = device.id;
+    simulatorKey = key;
+    simulatorBootId = randomUUID();
     const payload = buildPayload({
       deviceId: device.id,
-      bootId: randomUUID(),
+      bootId: simulatorBootId,
       bootCounter: '1',
       seq: '1',
       uptime: 5000,
@@ -104,9 +111,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     expect(await page.getByLabel('Nhiệt độ', { exact: true }).innerText()).toContain('27.1');
     await page.getByRole('img', { name: /Biểu đồ nhiệt độ/ }).waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-    ).toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), {
+        timeout: 5000,
+      })
+      .toBe(true);
     await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
     await page.getByRole('button', { name: 'Đăng nhập', exact: true }).waitFor();
     await page.reload();
@@ -114,5 +123,194 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     expect(await db.session.count({ where: { user: { email: 'browser@test.local' } } })).toBe(0);
     expect(errors).toEqual([]);
     await page.close();
+  }, 60000);
+
+  it('manages incidents, analytics export, versioned configuration, keys and archive from the web', async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.goto(origin);
+    await page.getByLabel('Email', { exact: true }).fill('browser@test.local');
+    await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
+    await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+    await page.getByRole('heading', { name: 'Tổng quan hệ thống' }).waitFor();
+    const send = async (seq: number, active: boolean) => {
+      const payload = buildPayload({
+        deviceId: simulatorId,
+        bootId: simulatorBootId,
+        bootCounter: '1',
+        seq: String(seq),
+        uptime: seq * 5000,
+        now: new Date(),
+      });
+      payload.readings[0]!.sensors.flame.detected = active;
+      payload.readings[0]!.alert_snapshot.flame = active ? 'active' : 'normal';
+      payload.readings[0]!.alert_snapshot.buzzer_commanded_on = active;
+      expect(
+        (
+          await fetch(`${apiUrl}/api/v1/device/telemetry`, {
+            method: 'POST',
+            headers: {
+              Authorization: `DeviceKey ${simulatorKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          })
+        ).status,
+      ).toBe(200);
+    };
+    await send(2, true);
+    await page
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Cảnh báo & sự cố', exact: true })
+      .click({ timeout: 5000 });
+    await page.getByRole('link', { name: 'Chi tiết', exact: true }).first().click();
+    await page.getByLabel('Ghi chú xác nhận').fill('Đã kiểm tra từ dashboard');
+    await page.getByRole('button', { name: 'Xác nhận đã xem', exact: true }).click();
+    await page.getByText('Đã xác nhận', { exact: true }).waitFor();
+    const incident = await db.alertIncident.findFirstOrThrow({
+      where: { deviceId: simulatorId, condition: 'flame' },
+    });
+    expect(incident.status).toBe('active');
+    await send(3, false);
+    await page.getByText('Đã kết thúc', { exact: true }).first().waitFor();
+    await page
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Analytics & lịch sử', exact: true })
+      .click();
+    await page.getByRole('heading', { name: 'Analytics & lịch sử', exact: true }).waitFor();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Xuất CSV', exact: true }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/^readings-.*\.csv$/);
+    expect(await readFile((await download.path())!, 'utf8')).toContain('simulator');
+    await page.getByRole('navigation').getByRole('link', { name: 'Thiết bị', exact: true }).click();
+    await page.getByRole('link', { name: 'Browser simulator', exact: true }).click();
+    await page.getByLabel('Chu kỳ gửi (giây)').fill('10');
+    await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click();
+    await page.getByText('Mong muốn: v2', { exact: true }).waitFor();
+    const configResponse = await fetch(`${apiUrl}/api/v1/device/config`, {
+      headers: { Authorization: `DeviceKey ${simulatorKey}` },
+    });
+    const config = (await configResponse.json()).data;
+    expect(config.version).toBe(2);
+    expect(
+      (
+        await fetch(`${apiUrl}/api/v1/device/config/ack`, {
+          method: 'POST',
+          headers: {
+            Authorization: `DeviceKey ${simulatorKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            version: config.version,
+            content_hash: config.content_hash,
+            status: 'applied',
+          }),
+        })
+      ).status,
+    ).toBe(200);
+    await page.getByText('Đã áp dụng: v2', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Đổi key', exact: true }).first().click();
+    await page.getByRole('region', { name: 'Credential mới' }).waitFor();
+    await page.getByRole('button', { name: 'Đã lưu, đóng', exact: true }).click();
+    await page.getByRole('button', { name: 'Lưu trữ thiết bị', exact: true }).click();
+    await page.getByText('Thiết bị đã lưu trữ', { exact: true }).waitFor();
+    expect(
+      (
+        await fetch(`${apiUrl}/api/v1/device/config`, {
+          headers: { Authorization: `DeviceKey ${simulatorKey}` },
+        })
+      ).status,
+    ).toBe(403);
+    await page.getByRole('button', { name: 'Khôi phục thiết bị', exact: true }).click();
+    await page.getByRole('button', { name: 'Lưu trữ thiết bị', exact: true }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), {
+        timeout: 5000,
+      })
+      .toBe(true);
+    await page
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Analytics & lịch sử', exact: true })
+      .click();
+    await page
+      .getByRole('img', {
+        name: 'Biểu đồ analytics có khoảng trống khi thiếu dữ liệu',
+        exact: true,
+      })
+      .waitFor();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), {
+        timeout: 5000,
+      })
+      .toBe(true);
+    await page
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Cảnh báo & sự cố', exact: true })
+      .click();
+    await page.getByRole('link', { name: 'Chi tiết', exact: true }).first().waitFor();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), {
+        timeout: 5000,
+      })
+      .toBe(true);
+    expect(pageErrors).toEqual([]);
+    await page.close();
+  }, 90000);
+  it('admin creates and locks users while self-service password change revokes browser sessions', async () => {
+    const adminPage = await browser.newPage();
+    await adminPage.goto(origin);
+    await adminPage.getByLabel('Email', { exact: true }).fill('browser@test.local');
+    await adminPage.getByLabel('Mật khẩu', { exact: true }).fill(password);
+    await adminPage.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+    await adminPage
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Tài khoản', exact: true })
+      .click({ timeout: 5000 });
+    const initial = randomUUID();
+    const updated = randomUUID();
+    await adminPage.getByLabel('Email tài khoản mới').fill('viewer-browser@test.local');
+    await adminPage.getByLabel('Mật khẩu ban đầu').fill(initial);
+    await adminPage.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
+    const row = adminPage.getByRole('row').filter({ hasText: 'viewer-browser@test.local' });
+    await row.getByRole('button', { name: 'Khóa', exact: true }).waitFor();
+    const viewer = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await viewer.goto(origin);
+    await viewer.getByLabel('Email', { exact: true }).fill('viewer-browser@test.local');
+    await viewer.getByLabel('Mật khẩu', { exact: true }).fill(initial);
+    await viewer.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+    await viewer.getByRole('heading', { name: 'Tổng quan hệ thống', exact: true }).waitFor();
+    expect(
+      await viewer
+        .getByRole('navigation')
+        .getByRole('link', { name: 'Tài khoản', exact: true })
+        .count(),
+    ).toBe(0);
+    await viewer
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Cài đặt', exact: true })
+      .click();
+    await viewer.getByLabel('Mật khẩu hiện tại', { exact: true }).first().fill(initial);
+    await viewer.getByLabel('Mật khẩu mới', { exact: true }).fill(updated);
+    await viewer.getByLabel('Nhập lại mật khẩu mới', { exact: true }).fill(updated);
+    await viewer.getByRole('button', { name: 'Đổi mật khẩu', exact: true }).click();
+    await viewer.getByRole('button', { name: 'Đăng nhập', exact: true }).waitFor();
+    await viewer.getByLabel('Email', { exact: true }).fill('viewer-browser@test.local');
+    await viewer.getByLabel('Mật khẩu', { exact: true }).fill(updated);
+    await viewer.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+    await viewer.getByText('Realtime kết nối', { exact: true }).waitFor();
+    await row.getByRole('button', { name: 'Khóa', exact: true }).click();
+    await viewer
+      .getByRole('button', { name: 'Đăng nhập', exact: true })
+      .waitFor({ timeout: 10000 });
+    await adminPage
+      .getByRole('navigation')
+      .getByRole('link', { name: 'Nhật ký quản trị', exact: true })
+      .click();
+    await adminPage.getByRole('cell', { name: 'user.updated', exact: true }).first().waitFor();
+    await viewer.close();
+    await adminPage.close();
   }, 60000);
 });

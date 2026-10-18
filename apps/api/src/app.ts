@@ -3,10 +3,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import argon2 from 'argon2';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { z, ZodError } from 'zod';
+import { randomUUID } from 'node:crypto';
+import { ZodError } from 'zod';
 import type { Database } from '@iot/database';
-import { createDeviceSchema, loginSchema, telemetrySchema, counterSchema } from '@iot/contracts';
+import { loginSchema, telemetrySchema } from '@iot/contracts';
 import { ApiError } from './lib/errors.js';
 import {
   authenticateDevice,
@@ -15,9 +15,14 @@ import {
   newSecret,
   SESSION_COOKIE,
 } from './modules/auth.js';
-import { ingest, listDevices, readingView } from './modules/telemetry.js';
+import { ingest } from './modules/telemetry.js';
 import { openapi } from './openapi.js';
 import { allowedWebOrigins } from './lib/origins.js';
+import { registerDeviceTransport, registerDevices } from './modules/devices.js';
+import { registerAlertTransport, registerAlerts } from './modules/alerts.js';
+import { registerAnalytics } from './modules/analytics.js';
+import { registerUsers } from './modules/users.js';
+import type { AlertNotifier } from './modules/notifications.js';
 
 export function createApp({
   db,
@@ -27,6 +32,8 @@ export function createApp({
   onLogout = () => {},
   onRequest = () => {},
   onFailure = () => {},
+  onEvent = () => {},
+  notify,
 }: {
   db: Database;
   origin: string;
@@ -35,6 +42,8 @@ export function createApp({
   onLogout?: (sessionId: string) => void;
   onRequest?: (entry: { request_id: string; method: string; status: number }) => void;
   onFailure?: (entry: { request_id: string; code: string }) => void;
+  onEvent?: (type: string, deviceId: string) => void;
+  notify?: AlertNotifier;
 }) {
   const app = express();
   const origins = allowedWebOrigins(origin);
@@ -106,13 +115,24 @@ export function createApp({
         throw new ApiError(401, 'INVALID_LOGIN', 'Email hoặc mật khẩu không đúng.');
       const token = newSecret();
       const expiresAt = new Date(Date.now() + 8 * 3600000);
-      await db.session.create({
-        data: { userId: user.id, tokenHash: hashSecret(token), expiresAt },
+      const current = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id}::uuid FOR UPDATE`;
+        const row = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
+        if (!row.active || row.passwordHash !== user.passwordHash || row.email !== user.email)
+          throw new ApiError(
+            401,
+            'INVALID_LOGIN',
+            'Thông tin đăng nhập đã thay đổi. Vui lòng thử lại.',
+          );
+        await tx.session.create({
+          data: { userId: row.id, tokenHash: hashSecret(token), expiresAt },
+        });
+        return row;
       });
       res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: 8 * 3600000 });
       reply(res, {
         expires_at: expiresAt.toISOString(),
-        user: { id: user.id, email: user.email, role: user.role },
+        user: { id: current.id, email: current.email, role: current.role },
       });
     },
   );
@@ -128,10 +148,20 @@ export function createApp({
     const input = telemetrySchema.parse(req.body);
     if (input.device_id !== key.deviceId)
       throw new ApiError(403, 'DEVICE_MISMATCH', 'Key không thuộc thiết bị này.');
-    const result = await ingest(db, key.keyId, input);
+    const result = await ingest(db, key.keyId, input, notify);
     reply(res, { accepted: result.accepted });
-    if (result.created.length > 0) onTelemetry(input.device_id);
+    if (result.created.length > 0) {
+      onTelemetry(input.device_id);
+      onEvent('alert.state.changed', input.device_id);
+      if (result.eventsChanged) onEvent('alert.event.created', input.device_id);
+      onEvent('device.status.changed', input.device_id);
+    }
   });
+
+  const transport = express.Router();
+  registerDeviceTransport(transport, { db, reply, publish: onEvent });
+  registerAlertTransport(transport, { db, reply, publish: onEvent, notify });
+  app.use('/api/v1', transport);
 
   app.use('/api/v1', async (req, res, next) => {
     const session = await authenticateUser(db, req.headers.authorization, req.headers.cookie);
@@ -156,68 +186,18 @@ export function createApp({
       return next(new ApiError(403, 'FORBIDDEN', 'Chỉ admin được thực hiện thao tác này.'));
     next();
   };
-  app.get('/api/v1/devices', async (_req, res) => reply(res, await listDevices(db)));
-  app.post('/api/v1/devices', admin, async (req, res) => {
-    const input = createDeviceSchema.parse(req.body);
-    const device = await db.device.create({
-      data: { name: input.name, sourceKind: input.source_kind },
-    });
-    res.status(201);
-    reply(res, { id: device.id, name: device.name, source_kind: device.sourceKind });
-  });
-  app.post('/api/v1/devices/:id/credentials', admin, async (req, res) => {
-    const deviceId = z.uuid().parse(req.params.id);
-    if (!(await db.device.findUnique({ where: { id: deviceId } })))
-      throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy thiết bị.');
-    const keyId = randomBytes(12).toString('base64url');
-    const secret = newSecret();
-    await db.deviceCredential.create({ data: { deviceId, keyId, secretHash: hashSecret(secret) } });
-    res.status(201);
-    reply(res, { key_id: keyId, key: `${keyId}.${secret}` });
-  });
-  app.delete('/api/v1/devices/:id/credentials/:keyId', admin, async (req, res) => {
-    const deviceId = z.uuid().parse(req.params.id);
-    const keyId = z
-      .string()
-      .regex(/^[A-Za-z0-9_-]{16}$/)
-      .parse(req.params.keyId);
-    const result = await db.deviceCredential.updateMany({
-      where: { deviceId, keyId },
-      data: { revokedAt: new Date() },
-    });
-    if (!result.count) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy key.');
-    res.status(204).end();
-  });
-  app.get('/api/v1/devices/:id/readings/latest', async (req, res) => {
-    const id = z.uuid().parse(req.params.id);
-    const device = await db.device.findUnique({ where: { id } });
-    if (!device) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy thiết bị.');
-    const latest =
-      device.latestId === null
-        ? null
-        : await db.sensorReading.findUnique({ where: { id: device.latestId } });
-    reply(res, latest ? readingView(latest) : null);
-  });
-  app.get('/api/v1/devices/:id/readings', async (req, res) => {
-    const deviceId = z.uuid().parse(req.params.id);
-    const query = z
-      .object({
-        limit: z.coerce.number().int().min(1).max(1000).default(120),
-        cursor: counterSchema.optional(),
-      })
-      .parse(req.query);
-    if (!(await db.device.findUnique({ where: { id: deviceId } })))
-      throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy thiết bị.');
-    const rows = await db.sensorReading.findMany({
-      where: { deviceId, ...(query.cursor ? { id: { lt: BigInt(query.cursor) } } : {}) },
-      orderBy: { id: 'desc' },
-      take: query.limit + 1,
-    });
-    const page = rows.slice(0, query.limit);
-    reply(res, page.map(readingView), {
-      next_cursor: rows.length > query.limit ? page.at(-1)!.id.toString() : null,
-    });
-  });
+  const operator: express.RequestHandler = (_req, res, next) => {
+    if (!['admin', 'operator'].includes(res.locals.session.user.role as string))
+      return next(new ApiError(403, 'FORBIDDEN', 'Chỉ operator/admin được xác nhận sự cố.'));
+    next();
+  };
+  const features = express.Router();
+  const context = { db, reply, admin, operator, publish: onEvent, notify };
+  registerDevices(features, context);
+  registerAlerts(features, context);
+  registerAnalytics(features, context);
+  registerUsers(features, context, onLogout);
+  app.use('/api/v1', features);
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint không tồn tại.')));
   const errors: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
     if (res.headersSent) return;

@@ -4,18 +4,23 @@ Dashboard giám sát tín hiệu cảm biến phục vụ nghiên cứu/học t�
 
 ## Trạng thái hiện tại
 
-Lát cắt local đầu tiên gồm:
+Phần mềm local hiện gồm:
 
 - Express/TypeScript, PostgreSQL thật qua Prisma, migration.
 - Login, session cookie HttpOnly 8 giờ (giữ qua refresh), roles, admin bootstrap.
-- Đăng ký thiết bị thật/simulator; cấp và thu hồi device key, DB chỉ lưu hash.
+- Quản lý metadata/lưu trữ thiết bị; key list/expiry/rotation/revoke, DB chỉ lưu hash.
 - Batch ingestion, validation, duplicate/concurrency, atomic rollback và ordering.
 - Danh sách thiết bị, snapshot mới nhất, lịch sử cursor.
 - Socket.IO có authentication và room; realtime invalidation sau commit.
-- React dashboard tiếng Việt, theme, overview, monitoring/chart, thiết bị, snapshot cảnh báo, settings.
+- Incident/event history, bộ lọc, timeline và acknowledgement có danh tính; không tắt còi qua web.
+- Analytics min/max/average/count, so sánh kỳ trước, lịch sử theo thời gian và CSV chống formula injection.
+- Cấu hình chu kỳ gửi có version/expected_version/hash/ETag/ACK, heartbeat và lịch sử kết nối.
+- React dashboard tiếng Việt, theme, overview, monitoring/chart, sự cố, analytics, quản trị thiết bị/key/config.
 - Simulator gửi dữ liệu mô phỏng có nhãn. Không tự seed số đo vào dashboard.
+- Telegram warning/critical qua outbox PostgreSQL, chống gửi lặp theo sự cố/mức độ, retry/backoff; cấu hình bằng `.env`, mặc định tắt và không gửi simulator nếu chưa cho phép.
+- Quản lý tài khoản/đổi mật khẩu, khóa/quyền thu hồi sessions, nhật ký quản trị; retention/rollup có dry-run, backup mã hóa và restore vào DB trống riêng; CI checks và load runner 10 thiết bị/5 browser.
 
-Chưa có firmware/cloud, alert event history/ack, analytics/export, retention jobs và user management đầy đủ. Xem [PLAN.md](PLAN.md) và [các quyết định triển khai](docs/architecture/decisions.md).
+Firmware/cloud vẫn hoãn. Retention/backup chỉ chạy bằng lệnh hoặc lịch do người vận hành chọn, không tự xóa dữ liệu development. Xem [PLAN.md](PLAN.md), [runbook phần mềm](docs/operations/local-runbook.md), [các quyết định triển khai](docs/architecture/decisions.md) và [API/workflow](docs/api/monitoring.md). Các bài nghiệm thu dài hạn chưa được suy từ test chức năng.
 
 ## Yêu cầu
 
@@ -80,11 +85,52 @@ Mở **http://localhost:5173**, đăng nhập bằng tài khoản vừa tạo.
 npm run simulate
 ```
 
-Mẫu gửi mỗi 5 giây. Xem Overview hoặc Giám sát trực tiếp để thấy ADC/nhiệt độ/độ ẩm mô phỏng. Gas/CO giữ `not_configured`. Không mô phỏng thành nồng độ đo thật.
+Mặc định mẫu gửi mỗi 5 giây. Simulator tự nhận cấu hình chu kỳ từ server, xác minh hash và gửi ACK; chỉnh ở **Thiết bị → tên thiết bị → Cấu hình thiết bị** (1–60 giây). `SIM_INTERVAL_MS` chỉ là giá trị dự phòng trước khi tải được cấu hình. Xem Overview hoặc Giám sát trực tiếp để thấy ADC/nhiệt độ/độ ẩm mô phỏng. Gas/CO giữ `not_configured`. Không mô phỏng thành nồng độ đo thật.
 
-Simulator retry cùng nội dung khi timeout/5xx. Bản đầu tạo mẫu tuần tự, không mô phỏng đầy đủ buffer firmware. Dừng Ctrl+C; dashboard chuyển offline sau khoảng 30–35 giây, khi polling hoạt động.
+Simulator retry cùng nội dung khi timeout/5xx. Tạo mẫu tuần tự, chưa mô phỏng đầy đủ durable event/buffer firmware. Dừng Ctrl+C; dashboard chuyển offline sau max(30 giây, 3 × chu kỳ đã áp dụng), cộng tối đa khoảng 5 giây phát hiện.
 
 **Quan trọng:** source_kind được server lưu lúc đăng ký. Không dùng key của thiết bị thật để chạy simulator.
+
+#### Mô phỏng cảnh báo nguy hiểm
+
+Dừng simulator cũ bằng Ctrl+C rồi chạy (giữ `SIM_DEVICE_ID`/`SIM_DEVICE_KEY` của nguồn **Simulator** trong `.env`):
+
+```powershell
+npm run simulate -- --scenario danger
+```
+
+Chu kỳ lặp 10 mẫu: **1–2 bình thường → 3–6 Gas/CO/Flame active, còi mô phỏng bật → 7–10 phục hồi, còi mô phỏng tắt**. Với chu kỳ gửi 5 giây, cảnh báo đầu tiên xuất hiện sau khoảng 10 giây, kéo dài khoảng 20 giây; tốc độ thay đổi theo cấu hình chu kỳ truyền đã áp dụng.
+
+Mở **Giám sát trực tiếp** để xem snapshot và **Cảnh báo & sự cố** để thử timeline/acknowledge/kết thúc. Mỗi vòng tạo ba sự cố; acknowledge không kết thúc cảnh báo. Không có âm thanh hay lệnh tới còi vật lý. Kịch bản không dựa trên ADC/PPM, gas vẫn `uncalibrated`, PPM luôn null và MQ-7 heater vẫn `unverified`. Không dùng để xác nhận an toàn phần cứng.
+
+`npm run simulate` (hoặc `--scenario normal`) giữ chế độ cũ: Gas/CO `not_configured`, không tự tạo cảnh báo. Nếu dừng giữa pha active, sự cố có thể còn chưa kết thúc cho tới khi thiết bị gửi trạng thái normal; offline không tự đóng incident.
+
+### Dùng các màn hình mới
+
+- **Cảnh báo & sự cố**: lọc thiết bị/điều kiện/mức độ/trạng thái/xác nhận/thời gian; mở chi tiết để xem timeline. Operator/admin được xác nhận đã xem; không đóng incident hay tắt còi.
+- **Analytics & lịch sử**: chọn khoảng giờ, cơ sở thời gian đo/nhận, đại lượng và bucket; so sánh kỳ trước và tải CSV. Gas chỉ hiển thị ADC thô. Mẫu thiếu/lỗi không thành số 0.
+- **Thiết bị → tên thiết bị**: sửa vị trí/mô tả; cấp/đổi/thu hồi key và hạn dùng; xem desired/applied config, phiên bản/ACK và lịch sử online/offline. Lưu trữ giữ dữ liệu nhưng chặn key; khôi phục chỉ mở lại key còn hiệu lực.
+- Khi nâng cấp checkout cũ, dừng API rồi chạy `npm run db:generate` và `npm run db:migrate` trước khi khởi động lại; migration bổ sung giữ nguyên users/telemetry và khởi tạo config v1 cho thiết bị cũ. Backup trước khi migrate database có dữ liệu quan trọng.
+
+### Nhận cảnh báo qua bot Telegram
+
+1. Tạo bot bằng **@BotFather** trong Telegram, giữ token riêng tư.
+2. Nhắn `/start` cho bot (hoặc thêm bot vào group và cấp quyền gửi tin); lấy `chat_id` từ `getUpdates` của bot. Chat ID group/supergroup thường là số âm. Không đưa token vào ảnh chụp, Git hoặc gửi trong chat này.
+3. Điền các biến sau vào `.env` ignored:
+
+```dotenv
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=<token-cua-bot>
+TELEGRAM_CHAT_ID=<chat-id-dang-so>
+TELEGRAM_INCLUDE_SIMULATORS=true
+```
+
+4. Chạy `npm run db:generate`, `npm run db:migrate`, khởi động lại `npm run dev`.
+5. Để thử cảnh báo giả lập: `npm run simulate -- --scenario danger`. Mỗi vòng có hai warning Gas/CO và một critical Flame. Đặt `TELEGRAM_INCLUDE_SIMULATORS=false` khi chỉ muốn nhận từ thiết bị thật.
+
+Gửi khi có incident mới hoặc backend ghi nhận nâng mức; không gửi mỗi mẫu telemetry, không gửi riêng khi acknowledge/phục hồi. Worker xử lý sau DB commit, hàng đợi tồn tại qua restart; lỗi gửi không chặn ingestion và không điều khiển còi. Token/chat ID không nằm trong DB/log; tin có tên/vị trí thiết bị, condition, severity, thời gian UTC, ID sự cố và nhãn mô phỏng.
+
+Telegram phụ thuộc Internet, không bảo đảm giao đúng một lần khi timeout/tiến trình crash sau khi Telegram đã nhận. Không dùng thay cảnh báo cục bộ. Chi tiết retry, trạng thái lỗi và restore tại [runbook](docs/operations/local-runbook.md#telegram-warningcritical).
 
 ### 5. Dừng local
 
@@ -103,6 +149,7 @@ npm test
 npm run test:integration
 npx playwright install chromium
 npm run test:e2e
+npm run test:load
 npm run typecheck
 npm run lint
 npm run build
@@ -112,7 +159,7 @@ npm audit
 
 - `npm test`: contract/unit/frontend; integration DB skip khi không có `TEST_DATABASE_URL`.
 - `npm run test:integration`: Docker phải chạy; runner tạo PostgreSQL container riêng với credential ngẫu nhiên, apply migration, chạy API/Socket tests rồi xóa đúng container thử nghiệm. Không sửa/xóa database development.
-- `npm run test:e2e`: container PostgreSQL riêng + API/Vite + Chromium thật; đăng nhập → tạo simulator/key → upload → chart → viewport mobile → logout. Cài Chromium bằng lệnh trên trước lần chạy đầu.
+- `npm run test:e2e`: container PostgreSQL riêng + API/Vite + Chromium thật; kiểm tra login/refresh/realtime/mobile/logout, incident/ack/timeline, CSV download, cấu hình/ACK, rotation key và lưu trữ/khôi phục. Cài Chromium bằng lệnh trên trước lần chạy đầu.
 - Chưa có kiểm thử firmware, HIL hoặc load/soak dài hạn. Kết quả đã chạy: [docs/testing/status.md](docs/testing/status.md).
 
 ## Contract tích hợp firmware
