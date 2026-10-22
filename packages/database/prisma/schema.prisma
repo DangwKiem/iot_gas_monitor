@@ -38,6 +38,7 @@ model Session {
   tokenHash String   @unique @map("token_hash")
   expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
   user      User     @relation(fields: [userId], references: [id])
+  pushSubscription WebPushSubscription?
 
   @@index([expiresAt])
   @@map("sessions")
@@ -132,6 +133,7 @@ model AlertIncident {
   acknowledgement AlertAcknowledgement?
   states          AlertState[]
   notifications   TelegramNotification[]
+  pushDeliveries WebPushDelivery[]
 
   @@unique([deviceId, externalId])
   @@index([deviceId, firstObservedAt(sort: Desc)])
@@ -284,4 +286,42 @@ model TelegramNotification {
   @@unique([incidentId, severity])
   @@index([status, nextAttemptAt])
   @@map("telegram_notifications")
+}
+
+model WebPushSubscription {
+  id String @id @default(uuid()) @db.Uuid
+  sessionId String @unique @map("session_id") @db.Uuid
+  endpointHash String @unique @map("endpoint_hash")
+  endpoint String
+  p256dh String
+  auth String
+  vapidPublicKey String @map("vapid_public_key")
+  includeSimulators Boolean @default(false) @map("include_simulators")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  deliveries WebPushDelivery[]
+
+  @@map("web_push_subscriptions")
+}
+
+model WebPushDelivery {
+  id String @id @default(uuid()) @db.Uuid
+  incidentId String @map("incident_id") @db.Uuid
+  subscriptionId String @map("subscription_id") @db.Uuid
+  severity String
+  status String @default("pending")
+  attempts Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(3)
+  leaseToken String? @map("lease_token") @db.Uuid
+  sentAt DateTime? @map("sent_at") @db.Timestamptz(3)
+  lastErrorCode String? @map("last_error_code")
+  incident AlertIncident @relation(fields: [incidentId], references: [id])
+  subscription WebPushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, severity, subscriptionId])
+  @@index([status, nextAttemptAt])
+  @@map("web_push_deliveries")
 }

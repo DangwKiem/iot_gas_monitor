@@ -1,8 +1,33 @@
 import { expect, it } from 'vitest';
 import { parseConfig } from '../src/config.js';
+import webpush from 'web-push';
 
 it('rejects missing database configuration instead of silently using another database', () => {
   expect(() => parseConfig({})).toThrow();
+});
+it('keeps Web Push disabled unless a complete matching VAPID key pair and subject are configured', () => {
+  const base = { DATABASE_URL: 'postgresql://localhost/iot' };
+  expect(parseConfig(base)).toMatchObject({ webPush: undefined });
+  expect(() => parseConfig({ ...base, WEB_PUSH_ENABLED: 'true' })).toThrow();
+  const pair = webpush.generateVAPIDKeys();
+  expect(
+    parseConfig({
+      ...base,
+      WEB_PUSH_ENABLED: 'true',
+      WEB_PUSH_VAPID_PUBLIC_KEY: pair.publicKey,
+      WEB_PUSH_VAPID_PRIVATE_KEY: pair.privateKey,
+      WEB_PUSH_VAPID_SUBJECT: 'mailto:admin@example.com',
+    }),
+  ).toMatchObject({ webPush: { publicKey: pair.publicKey, subject: 'mailto:admin@example.com' } });
+  expect(() =>
+    parseConfig({
+      ...base,
+      WEB_PUSH_ENABLED: 'true',
+      WEB_PUSH_VAPID_PUBLIC_KEY: pair.publicKey,
+      WEB_PUSH_VAPID_PRIVATE_KEY: webpush.generateVAPIDKeys().privateKey,
+      WEB_PUSH_VAPID_SUBJECT: 'mailto:admin@example.com',
+    }),
+  ).toThrow();
 });
 it('disables Telegram by default and requires complete explicit credentials when enabled', () => {
   const base = { DATABASE_URL: 'postgresql://localhost/iot' };

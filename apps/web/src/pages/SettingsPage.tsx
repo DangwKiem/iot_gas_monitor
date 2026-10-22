@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
 import { PageTitle, LoadState } from '../components/FeatureUI.js';
+import { PushSettings } from '../components/PushSettings.js';
 export default function SettingsPage({
   user,
   theme,
@@ -47,6 +48,7 @@ export default function SettingsPage({
       <PageTitle eyebrow="PREFERENCES" title="Cài đặt">
         <p>Tài khoản và giao diện làm việc.</p>
       </PageTitle>
+      <PushSettings />
       <section className="panel settings-panel">
         <h2>Tài khoản</h2>
         <p>{user.email}</p>

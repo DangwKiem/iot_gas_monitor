@@ -1,4 +1,4 @@
-# Monitoring local v0.4
+# Monitoring local v0.5
 
 Đường dẫn bên dưới có prefix `/api/v1`. OpenAPI tại `/openapi.json`; schemas thực thi trong `packages/contracts/src`. Web dùng session cookie và `X-Requested-With: AirGuard` cho mutation. Device endpoints chỉ dùng `Authorization: DeviceKey <key_id>.<secret>`.
 
@@ -106,3 +106,12 @@ Maintenance mặc định dry-run, apply cần backup mã hóa xác thực cùng
 Warning/critical gửi qua outbox PostgreSQL khi bật `TELEGRAM_ENABLED` và cấu hình bot token/chat ID. Một outbox entry cho mỗi incident/severity, không gửi mỗi sample hoặc acknowledge; simulator phải opt-in riêng. Queue cùng transaction với incident, worker gửi sau commit; lỗi Telegram không đổi ACK ingest. Không thêm REST endpoint hoặc inbound webhook cho bot. Xem [runbook](../operations/local-runbook.md#telegram-warningcritical) cho retry/expiry/secret handling và giới hạn at-least-once.
 
 Chưa có firmware/HIL, chính sách cảnh báo phần cứng được nghiệm thu, email/SMS, dịch vụ push khác ngoài Telegram hoặc cloud. Không tự cài scheduler OS, không auto-purge DB development và không tự xóa backup. Các kiểm thử local không thay thế soak/load dài hạn hay chứng nhận an toàn.
+
+## Web Push (tùy chọn)
+
+- `GET /api/v1/push/config`: yêu cầu phiên; trả `enabled`, `public_key` (hoặc null), `session_bound=true`. Không trả private key.
+- `GET /api/v1/push/subscription`: chỉ đăng ký phiên hiện tại hoặc null; trả ID, endpoint hash, simulator opt-in, VAPID public key và session expiry, không trả endpoint/auth keys.
+- `POST /api/v1/push/subscription`: body `{subscription:{endpoint,keys:{p256dh,auth},expirationTime:null},application_server_key,include_simulators:false}`. Mọi role đăng nhập được opt-in. Yêu cầu header CSRF/Origin như các web mutation khác. Chỉ provider HTTPS trong allowlist, key P-256 hợp lệ/cặp VAPID hiện hành. Endpoint thuộc phiên còn hiệu lực của tài khoản khác bị từ chối 409; cùng user có thể chuyển sang phiên mới. Tối đa 20 đăng ký/tài khoản.
+- `DELETE /api/v1/push/subscription`: idempotent, 204, chỉ phiên hiện tại; browser tự unsubscribe/đóng notifications phía client.
+- Warning/critical enqueue trong transaction incident, unique `(incident_id,severity,subscription_id)`, không backfill. Simulator cần opt-in riêng; ACK/recovery không gửi thông báo riêng. Logout/thu hồi session cascade xóa subscription/delivery; hết phiên và đổi VAPID chặn gửi. Provider có thể giao tin đã nhận sau thu hồi.
+- Retry/lease/TTL và hướng dẫn cấu hình: xem [README](../../README.md#thông-báo-web-push). Endpoint/auth keys chỉ lưu backend, không log; backup phải mã hóa.

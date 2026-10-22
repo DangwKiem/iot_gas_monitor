@@ -1,4 +1,13 @@
-# Trạng thái kiểm thử — phần mềm local v0.4
+# Trạng thái kiểm thử — phần mềm local v0.5
+
+## Web Push — lần kiểm tra bổ sung
+
+- `npm test`: 48 pass, 78 skip (các test cần DB/browser chạy bằng runner riêng).
+- `npm run test:integration`: 91 pass, DB PostgreSQL container riêng; migration Web Push áp dụng thành công.
+- `npm run test:e2e`: 4 pass, 1 skip. Service worker thật được phục vụ/kích hoạt, trang Cài đặt giải thích backend-disabled. Test notification native skip vì Chromium headless trả `Notification.permission=denied` dù Permissions API được override thành granted; không giả kết quả giao tin.
+- Build/typecheck và lint đạt. Unit tests kiểm tra handler push/click, URL same-origin, payload lỗi, thao tác opt-in/out UI và VAPID/transport classification. Integration kiểm tra auth, ownership, endpoint/key validation, transactional dedup, lease đồng thời, retry/410, simulator opt-in mặc định tắt, logout và hết phiên.
+- Chưa xác minh gửi/giao qua provider thật, Firefox/Safari/Edge hay hành vi khi đóng trình duyệt trên OS thật. Cần thử thủ công theo README sau khi quản trị viên cấu hình VAPID riêng.
+- Mặc định Web Push tắt. Chưa tự tạo/lưu private key hoặc thay đổi `.env`; migration development cần chạy theo README.
 
 ## Môi trường
 

@@ -23,6 +23,8 @@ import { registerAlertTransport, registerAlerts } from './modules/alerts.js';
 import { registerAnalytics } from './modules/analytics.js';
 import { registerUsers } from './modules/users.js';
 import type { AlertNotifier } from './modules/notifications.js';
+import { registerPushSubscriptions } from './modules/push-subscriptions.js';
+import type { WebPushConfig } from './modules/web-push.js';
 
 export function createApp({
   db,
@@ -34,6 +36,7 @@ export function createApp({
   onFailure = () => {},
   onEvent = () => {},
   notify,
+  webPush,
 }: {
   db: Database;
   origin: string;
@@ -44,6 +47,7 @@ export function createApp({
   onFailure?: (entry: { request_id: string; code: string }) => void;
   onEvent?: (type: string, deviceId: string) => void;
   notify?: AlertNotifier;
+  webPush?: WebPushConfig;
 }) {
   const app = express();
   const origins = allowedWebOrigins(origin);
@@ -197,6 +201,7 @@ export function createApp({
   registerAlerts(features, context);
   registerAnalytics(features, context);
   registerUsers(features, context, onLogout);
+  registerPushSubscriptions(features, context, webPush);
   app.use('/api/v1', features);
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint không tồn tại.')));
   const errors: ErrorRequestHandler = (error: unknown, _req, res, _next) => {

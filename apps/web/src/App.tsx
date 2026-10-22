@@ -20,6 +20,7 @@ import {
 import type { DeviceView } from '@iot/contracts';
 import { api, HttpError } from './lib/api.js';
 import { createRefetchBatcher } from './lib/refetch-batcher.js';
+import { clearBrowserPush } from './lib/web-push.js';
 import LoginPage, { type SessionView } from './pages/LoginPage.js';
 import OverviewPage from './pages/OverviewPage.js';
 import SettingsPage from './pages/SettingsPage.js';
@@ -81,8 +82,10 @@ export function App() {
   const userId = session?.user.id;
   const expiresAt = session?.expires_at;
   useEffect(() => {
-    if (sessionQuery.data === null)
+    if (sessionQuery.data === null) {
       queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== 'session' });
+      void clearBrowserPush().catch(() => {});
+    }
   }, [sessionQuery.data, queryClient]);
   useEffect(() => {
     if (!expiresAt) return;

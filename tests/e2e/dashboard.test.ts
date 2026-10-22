@@ -2,13 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, type Browser } from '@playwright/test';
 import { createServer as createPortServer } from 'node:net';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import { createDatabase } from '@iot/database';
 import { createRuntime } from '../../apps/api/src/runtime.js';
 import { buildPayload } from '../../tools/device-simulator/src/payload.js';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL', () => {
   const db = createDatabase(process.env.TEST_DATABASE_URL ?? 'postgresql://localhost/iot_test');
@@ -313,4 +314,106 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     await viewer.close();
     await adminPage.close();
   }, 60000);
+  it('displays a native push notification when this browser permits notification delivery', async ({
+    skip,
+  }) => {
+    const temporary =
+      process.platform === 'win32' && process.env.LOCALAPPDATA
+        ? join(process.env.LOCALAPPDATA, 'Temp', 'opencode')
+        : tmpdir();
+    await mkdir(temporary, { recursive: true });
+    const profile = await mkdtemp(join(temporary, 'iot-webpush-browser-'));
+    const context = await chromium.launchPersistentContext(profile, {
+      headless: true,
+      permissions: ['notifications'],
+    });
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    const registered = new Promise<string>((resolve) => {
+      cdp.on('ServiceWorker.workerRegistrationUpdated', ({ registrations }) => {
+        const row = registrations.find((r) => r.scopeURL === `${origin}/` && !r.isDeleted);
+        if (row) resolve(row.registrationId);
+      });
+    });
+    try {
+      await cdp.send('ServiceWorker.enable');
+      await page.goto(origin);
+      await page.getByLabel('Email', { exact: true }).fill('browser@test.local');
+      await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
+      await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+      await page.getByText('Realtime kết nối', { exact: true }).waitFor();
+      await context.grantPermissions(['notifications'], { origin });
+      if ((await page.evaluate(() => Notification.permission)) !== 'granted')
+        skip(
+          'Native Notification.permission is denied by this headless browser despite permission override; no delivery claim.',
+        );
+      await page.evaluate(async () => {
+        await navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
+        await navigator.serviceWorker.ready;
+      });
+      await cdp.send('ServiceWorker.deliverPushMessage', {
+        origin,
+        registrationId: await registered,
+        data: JSON.stringify({
+          severity: 'critical',
+          incident_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          simulator: true,
+          ended: false,
+          url: '/app/alerts/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        }),
+      });
+      await expect
+        .poll(
+          () =>
+            page.evaluate(async () => {
+              const row = await navigator.serviceWorker.getRegistration('/push-sw.js');
+              return ((await row?.getNotifications()) ?? []).map((n) => ({
+                title: n.title,
+                body: n.body,
+              }));
+            }),
+          { timeout: 10000 },
+        )
+        .toEqual([
+          {
+            title: 'AirGuard — CRITICAL',
+            body: 'MÔ PHỎNG · Có cập nhật cảnh báo cần xem. Mở AirGuard và đăng nhập để xem chi tiết.',
+          },
+        ]);
+    } finally {
+      await page
+        .evaluate(async () => {
+          const row = await navigator.serviceWorker.getRegistration('/push-sw.js');
+          for (const n of (await row?.getNotifications()) ?? []) n.close();
+        })
+        .catch(() => {});
+      await cdp.detach();
+      await context.close();
+      await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 30000);
+  it('serves and activates the real push service worker while settings explain disabled backend configuration', async () => {
+    const page = await browser.newPage();
+    try {
+      await page.goto(origin);
+      await page.getByLabel('Email', { exact: true }).fill('browser@test.local');
+      await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
+      await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+      await page
+        .getByRole('navigation')
+        .getByRole('link', { name: 'Cài đặt', exact: true })
+        .click();
+      await page.getByRole('heading', { name: 'Thông báo Web Push', exact: true }).waitFor();
+      await page.getByText(/Backend chưa bật Web Push/).waitFor();
+      expect(await page.getByRole('button', { name: 'Bật Web Push', exact: true }).count()).toBe(0);
+      const worker = await page.evaluate(async () => {
+        await navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
+        const row = await navigator.serviceWorker.ready;
+        return { secure: isSecureContext, scope: row.scope, script: row.active?.scriptURL };
+      });
+      expect(worker).toEqual({ secure: true, scope: `${origin}/`, script: `${origin}/push-sw.js` });
+    } finally {
+      await page.close();
+    }
+  });
 });

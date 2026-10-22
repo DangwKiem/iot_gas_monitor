@@ -17,6 +17,7 @@ import {
   updateUserSchema,
   changePasswordSchema,
   changeEmailSchema,
+  registerPushSchema,
 } from '@iot/contracts';
 
 const success = { description: 'Response envelope: data + meta(request_id, server_time).' };
@@ -70,11 +71,29 @@ export const openapi = {
   openapi: '3.1.0',
   info: {
     title: 'AirGuard Local API',
-    version: '0.4.0',
+    version: '0.5.0',
     description:
       'Local: auth/RBAC, thiết bị/key/config, raw telemetry, incident/event/acknowledgement, analytics và CSV. Web dùng cookie HttpOnly; mọi request ghi của web (kể cả login) cần X-Requested-With: AirGuard và Origin thuộc allowlist. Chưa có firmware, calibrated PPM hoặc cloud. Khoảng lọc [from,to), tối đa 90 ngày; chi tiết semantic tại docs/api/monitoring.md.',
   },
   paths: {
+    '/api/v1/push/config': {
+      get: operation('Web Push enabled/public VAPID key; yêu cầu đăng nhập, không trả private key'),
+    },
+    '/api/v1/push/subscription': {
+      get: operation(
+        'Đăng ký phiên hiện tại: ID/hash/tùy chọn/expiry; không trả endpoint/auth keys',
+      ),
+      post: {
+        ...operation(
+          'Opt-in Web Push cho phiên hiện tại; simulator mặc định tắt, chỉ endpoint HTTPS trong allowlist',
+        ),
+        requestBody: requestBody(registerPushSchema),
+      },
+      delete: {
+        ...operation('Hủy đăng ký của phiên hiện tại'),
+        responses: { '204': success, ...errors },
+      },
+    },
     '/api/v1/users/me': {
       get: operation('Thông tin tài khoản hiện tại'),
       patch: {

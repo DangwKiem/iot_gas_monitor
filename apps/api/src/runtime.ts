@@ -8,6 +8,7 @@ import { allowedWebOrigins } from './lib/origins.js';
 import { reconcileOffline } from './modules/presence.js';
 import { telegramNotifier, startTelegramWorker } from './modules/notifications.js';
 import type { TelegramConfig } from './modules/telegram-client.js';
+import { webPushNotifier, startWebPushWorker, type WebPushConfig } from './modules/web-push.js';
 
 export function createRuntime(
   db: Database,
@@ -17,10 +18,12 @@ export function createRuntime(
     onFailure?: (entry: { request_id: string; code: string }) => void;
     secureCookies?: boolean;
     telegram?: TelegramConfig;
+    webPush?: WebPushConfig;
     onNotification?: (entry: {
       notification_id?: string;
       status?: string;
       code?: string | null;
+      channel?: 'telegram' | 'webpush';
     }) => void;
   } = {},
 ) {
@@ -28,7 +31,15 @@ export function createRuntime(
     db,
     origin,
     ...logging,
-    notify: logging.telegram ? telegramNotifier(logging.telegram.includeSimulators) : undefined,
+    webPush: logging.webPush,
+    notify:
+      logging.telegram || logging.webPush
+        ? async (tx, incident) => {
+            if (logging.telegram)
+              await telegramNotifier(logging.telegram.includeSimulators)(tx, incident);
+            if (logging.webPush) await webPushNotifier()(tx, incident);
+          }
+        : undefined,
     onTelemetry: (deviceId) =>
       io
         .of('/monitoring')
@@ -67,6 +78,7 @@ export function createRuntime(
   }
   let timer: ReturnType<typeof setInterval> | undefined;
   let stopWorker: (() => Promise<void>) | undefined;
+  let stopPushWorker: (() => Promise<void>) | undefined;
   let reconciling = false;
   async function reconcile() {
     if (reconciling) return;
@@ -81,7 +93,13 @@ export function createRuntime(
   }
   http.on('listening', () => {
     if (logging.telegram)
-      stopWorker = startTelegramWorker(db, logging.telegram, logging.onNotification ?? (() => {}));
+      stopWorker = startTelegramWorker(db, logging.telegram, (entry) =>
+        logging.onNotification?.({ ...entry, channel: 'telegram' }),
+      );
+    if (logging.webPush)
+      stopPushWorker = startWebPushWorker(db, logging.webPush, (entry) =>
+        logging.onNotification?.({ ...entry, channel: 'webpush' }),
+      );
     timer = setInterval(() => void reconcile(), 5000);
     timer.unref();
     void reconcile();
@@ -89,6 +107,7 @@ export function createRuntime(
   http.on('close', () => {
     if (timer) clearInterval(timer);
     void stopWorker?.();
+    void stopPushWorker?.();
   });
   namespace.use(async (socket, next) => {
     try {
@@ -141,6 +160,7 @@ export function createRuntime(
     io,
     stopNotifications: async () => {
       await stopWorker?.();
+      await stopPushWorker?.();
     },
   };
 }

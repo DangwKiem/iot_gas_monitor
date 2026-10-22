@@ -12,6 +12,7 @@ Hệ thống giám sát tín hiệu cảm biến môi trường/gas, có dashboa
 - [Tạo thiết bị và chạy simulator](#tạo-thiết-bị-và-chạy-simulator)
 - [Thử cảnh báo nguy hiểm](#thử-cảnh-báo-nguy-hiểm)
 - [Cấu hình Telegram](#cấu-hình-telegram)
+- [Thông báo Web Push](#thông-báo-web-push)
 - [Sử dụng dashboard](#sử-dụng-dashboard)
 - [Chạy lại hằng ngày và dừng hệ thống](#chạy-lại-hằng-ngày-và-dừng-hệ-thống)
 - [Cập nhật mã nguồn mà giữ dữ liệu](#cập-nhật-mã-nguồn-mà-giữ-dữ-liệu)
@@ -51,7 +52,7 @@ Simulator ──HTTP──> API Node.js ──> PostgreSQL trong Docker
 - **Backend/API** nhận dữ liệu, kiểm tra quyền, lưu DB và xử lý sự cố.
 - **Frontend/dashboard** là trang web xem dữ liệu và quản trị.
 - **Simulator** là chương trình giả lập thiết bị, chỉ gửi dữ liệu khi bạn chạy nó.
-- Không cần tài khoản cloud để làm theo hướng dẫn này. Chỉ Telegram cần Internet và tài khoản Telegram nếu muốn bật thông báo.
+- Không cần tài khoản cloud để làm theo hướng dẫn này. Telegram và Web Push cần Internet nếu muốn bật thông báo; riêng Telegram cần tài khoản Telegram.
 
 ## Chuẩn bị trước khi cài
 
@@ -195,7 +196,7 @@ npm run db:migrate
 
 - `db:generate` tạo Prisma Client từ schema, không tự tạo bảng database.
 - `db:migrate` tạo/cập nhật bảng theo migration đã commit, dùng kết nối trong `.env`.
-- Bản hiện tại có các migration nền tảng, monitoring, operations và Telegram. Sau khi chạy xong không được còn lỗi kết nối/thiếu bảng.
+- Bản hiện tại có các migration nền tảng, monitoring, operations, Telegram và Web Push. Sau khi chạy xong không được còn lỗi kết nối/thiếu bảng.
 - Chạy lại `db:migrate` khi DB đã mới nhất là bình thường; không cần reset.
 
 Nếu cần xem trạng thái:
@@ -407,6 +408,36 @@ npm run simulate -- --scenario danger
 - Telegram phụ thuộc mạng, có thể giao trùng nếu mất ACK hoặc crash sau khi Telegram đã nhận; không cam kết exactly-once và không thay thế cảnh báo cục bộ.
 
 Chi tiết mã lỗi, retry và trạng thái DB tại [runbook Telegram](docs/operations/local-runbook.md#telegram-warningcritical).
+
+## Thông báo Web Push
+
+Web Push là tùy chọn, gửi warning/critical tới từng trình duyệt đã chủ động đăng ký. Dashboard local vẫn dùng được khi tính năng này tắt.
+
+1. Chạy `npm install` rồi `npm run db:migrate` để thêm bảng đăng ký/hàng đợi (không reset DB).
+2. Chạy `npm run webpush:keys` trong terminal riêng. Lệnh in **cả private key**: không chia sẻ ảnh terminal hoặc commit kết quả. Sao chép cặp khóa vào `.env`:
+
+   ```dotenv
+   WEB_PUSH_ENABLED=true
+   WEB_PUSH_VAPID_PUBLIC_KEY=<public key vừa tạo>
+   WEB_PUSH_VAPID_PRIVATE_KEY=<private key vừa tạo>
+   WEB_PUSH_VAPID_SUBJECT=mailto:email-lien-he-cua-ban@example.com
+   ```
+
+3. Giữ nguyên cặp khóa qua các lần khởi động; chỉ backend giữ private key, không thêm tiền tố `VITE_`. Khởi động lại `npm run dev`.
+4. Mở **http://localhost:5173**, đăng nhập, vào **Cài đặt → Thông báo Web Push → Bật Web Push**, rồi cho phép thông báo. Chỉ xin quyền sau khi bấm bật. Để thử simulator, chọn **Nhận cả cảnh báo mô phỏng**, lưu tùy chọn rồi chạy `npm run simulate -- --scenario danger` với thiết bị/key simulator đã cấu hình.
+5. Bấm **Tắt Web Push** để hủy trên trình duyệt hiện tại. Mỗi trình duyệt cần bật riêng. Đăng xuất, thu hồi phiên hoặc hết phiên (8 giờ) làm đăng ký mất hiệu lực; đăng nhập lại cần bật lại.
+
+**Điều kiện và giới hạn:**
+
+- Cần Internet từ backend/trình duyệt tới nhà cung cấp push và HTTPS hoặc localhost. **HTTP qua IP LAN không hỗ trợ**; không cần triển khai cloud để thử trên localhost.
+- Hỗ trợ endpoint Chrome/FCM, Firefox, Safari và Windows/Edge trong allowlist. Safari/iOS phụ thuộc phiên bản; iOS thường cần thêm website vào màn hình chính trước khi xin quyền.
+- Nếu bị chặn quyền, mở quyền website của trình duyệt và cho phép rồi tải lại. Kiểm tra chế độ Không làm phiền/quyền thông báo của hệ điều hành. Bấm **Kiểm tra lại** để cập nhật trạng thái.
+- Thông báo không chứa tên/vị trí thiết bị hay số đo; bấm để mở chi tiết có kiểm tra đăng nhập. Tin đã được provider nhận vẫn có thể tới sau khi đăng xuất; ứng dụng không bảo đảm thu hồi tin đang trên đường truyền.
+- Hàng đợi transactional, unique theo incident/mức độ/đăng ký; retry tối đa 8 lần, hết hạn sau 6 giờ, lease 30 giây. Provider TTL 60 giây; 404/410 xóa endpoint, 429 backoff. Không backfill sự cố cũ khi bật. Thay VAPID cần đăng ký lại.
+- Best-effort at-least-once: có thể trùng/trễ/mất do hệ điều hành, mạng hoặc đóng hoàn toàn trình duyệt. Không thay thế còi cục bộ; ACK không tắt còi, recovery/ACK không gửi tin riêng. Service worker chỉ xử lý thông báo, không cache dashboard/API.
+- Restore thu hồi sessions nên xóa cả đăng ký/delivery liên quan bằng cascade; không phát lại Web Push cũ. Endpoint và auth keys là dữ liệu nhạy cảm, chỉ lưu backend/backup mã hóa, không trả trong API hoặc log.
+
+Kiểm thử tự động xác minh API/outbox, UI và handler service worker; **chưa xác minh giao tin qua provider thật**. Chromium headless tại máy kiểm thử chặn native Notification dù permission override, nên test giao notification native được skip có lý do; test kích hoạt service worker vẫn chạy.
 
 ## Sử dụng dashboard
 
