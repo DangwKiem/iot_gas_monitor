@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "AlertPolicy.h"
 
-constexpr const char* kFirmwareVersion = "esp32-0.3.0";
+constexpr const char* kFirmwareVersion = "esp32-0.3.1";
 
 struct GasSignal {
   bool valid = false;

@@ -1,5 +1,11 @@
 # Trạng thái kiểm thử — phần mềm v0.6
 
+## Kiểm tra còi — firmware 0.3.1
+
+- Thêm lựa chọn DC/PWM, cấu hình tần số và lệnh Serial `d`/`p`/`t` kích thử 2 giây. GPIO25 chỉ thay cấu hình khi đổi mode và chỉ cập nhật duty/mức khi lệnh thay đổi.
+- Build ESP32 Arduino 3.3.11 đạt với cả `kBuzzerUsePwm=false` và true. Mặc định giữ DC cho KY-012 active. Không thay đổi ngưỡng hoặc luồng backend/frontend.
+- Có báo lỗi attach/write PWM trong Serial. Chưa xác nhận âm thanh trên module thực tế của người dùng; cần kiểm tra nguồn, pinout, polarity và mức điều khiển.
+
 ## Cảnh báo theo ngưỡng — 11/11/2026
 
 - `npm test` đạt 52 bài, bỏ qua 82 bài cần runner database/browser riêng. `npm run test:integration` đạt 94 bài với PostgreSQL biệt lập. Chromium E2E đạt 5 bài, bỏ qua 1 bài native Notification theo giới hạn headless đã ghi bên dưới.

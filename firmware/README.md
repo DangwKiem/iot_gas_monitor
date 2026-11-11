@@ -4,14 +4,14 @@ Sketch `GasMonitor/GasMonitor.ino` chạy trên ESP32 DevKitC với ESP32-WROOM-
 
 ## Chân theo sơ đồ
 
-| Tín hiệu           | GPIO       | Điều kiện trước khi nối                                                                                                                              |
-| ------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MQ-2 AO            | 34         | Xác minh toàn dải điện áp AO với module cấp 5 V.                                                                                                     |
-| MQ-7 AO            | 35         | Xác minh toàn dải điện áp AO với module cấp 5 V.                                                                                                     |
-| Flame AO           | 32         | Xác minh toàn dải AO ở nguồn cấp thực tế của module.                                                                                                 |
-| DHT11 DATA         | 18         | DATA phải được kéo lên 3,3 V hoặc đi qua mạch chuyển mức phù hợp. Kiểm tra pull-up có sẵn trên module nếu dùng loại 3 chân.                          |
-| KY-012 S/PWM       | 25         | Chỉ nối trực tiếp nếu chân S nhận logic 3,3 V và không đưa 5 V về GPIO. Nếu cần tầng driver, xác minh mức kích và đặt `kBuzzerActiveHigh` theo mạch. |
-| LED xanh, đỏ, vàng | 27, 14, 13 | Mỗi LED nối tiếp một điện trở 330 Ω như sơ đồ, cathode về GND.                                                                                       |
+| Tín hiệu           | GPIO       | Điều kiện trước khi nối                                                                                                               |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| MQ-2 AO            | 34         | Xác minh toàn dải điện áp AO với module cấp 5 V.                                                                                      |
+| MQ-7 AO            | 35         | Xác minh toàn dải điện áp AO với module cấp 5 V.                                                                                      |
+| Flame AO           | 32         | Xác minh toàn dải AO ở nguồn cấp thực tế của module.                                                                                  |
+| DHT11 DATA         | 18         | DATA phải được kéo lên 3,3 V hoặc đi qua mạch chuyển mức phù hợp. Kiểm tra pull-up có sẵn trên module nếu dùng loại 3 chân.           |
+| Điều khiển còi 5 V | 25         | Với board TMB12A05 lấy điện qua S, dùng tầng transistor/MOSFET để điều khiển tải 5 V. GPIO25 nối đầu vào driver theo mức logic 3,3 V. |
+| LED xanh, đỏ, vàng | 27, 14, 13 | Mỗi LED nối tiếp một điện trở 330 Ω như sơ đồ, cathode về GND.                                                                        |
 
 **Trước khi cấp nguồn theo sơ đồ, tháo dây AO của MQ-2, MQ-7 và Flame, dây DATA của DHT11 và dây S của còi khỏi ESP32 nếu chưa xác minh mức điện áp.** Module cấp 5 V có thể đưa 5 V hoặc gần 5 V lên tín hiệu. Tắt kênh trong phần mềm vẫn để điện áp đi vào chân vật lý. Khi xác minh, cần có căn cứ cho dải tín hiệu trong toàn bộ điều kiện hoạt động, kể cả lúc khởi động. Một lần đo trong không khí bình thường chưa đủ để xác nhận dải AO.
 
@@ -21,7 +21,7 @@ Sketch đo trực tiếp tại GPIO và không dùng cầu chia 10 kΩ/15 kΩ. N
 
 1. Mở `GasMonitor/GasMonitor.ino`. Trong Boards Manager, cài `esp32 by Espressif Systems`. Trong Library Manager, cài `DHT sensor library by Adafruit` và dependency `Adafruit Unified Sensor`.
 2. Chọn **ESP32 Dev Module** và cổng COM của board. Để kiểm tra lần đầu, dùng USB với board và các LED. Kiểm tra các cờ đọc cảm biến, điều khiển còi và kiểu ngõ vào Flame trong `GasMonitor/BenchConfig.h` theo mạch thực tế.
-3. Bấm **Upload**, rồi mở **Serial Monitor** ở **115200 baud**. Gửi ký tự `t` để LED đỏ sáng khoảng 300 ms. Còi chỉ được kích nếu đã bật `kDriveBuzzer`.
+3. Bấm **Upload**, rồi mở **Serial Monitor** ở **115200 baud**. Gửi ký tự `t` để thử LED đỏ và còi trong 2 giây. Còi chỉ được kích nếu đã bật `kDriveBuzzer`.
 4. Sau khi xác minh điện áp của từng kênh, tắt nguồn, nối kênh đó, bật cờ tương ứng trong `BenchConfig.h`, rồi nạp lại. Serial báo ADC thô 12 bit và mV tại GPIO mỗi giây. Kênh analog lấy trung bình 20 mẫu, DHT11 cập nhật khoảng 2 giây một lần. `ADC_CLIPPED` báo cửa sổ đo có mẫu chạm trần ADC.
 
 ## Kết nối ESP32 với web local
@@ -99,6 +99,26 @@ Firmware cũng hỗ trợ đầu ra số D0 của module Flame. Nếu module th�
 4. Nạp lại firmware. D0 được lọc ổn định 50 ms và tín hiệu phát hiện lửa tạo Critical. Ngưỡng AO trên web chỉ áp dụng khi dùng ngõ analog.
 
 Không đổi cờ sang digital khi vẫn giữ dây AO. Không nối tín hiệu kéo lên 5 V vào GPIO32. Nếu module cần 5 V và D0 cũng lên 5 V, cần giao tiếp chuyển mức phù hợp.
+
+## Kiểm tra còi
+
+Firmware 0.3.1 hỗ trợ mức DC và PWM qua GPIO25. `kBuzzerUsePwm=false` dành cho module active nhận mức kích. `kBuzzerUsePwm=true` phát sóng vuông 2500 Hz, duty 50%, dùng khi module yêu cầu tín hiệu âm tần. Chân mang tên PWM chưa đủ để xác định module thuộc loại nào.
+
+Trong Serial Monitor 115200 baud, gửi từng ký tự và đợi kết thúc lượt thử trước lượt tiếp theo.
+
+| Lệnh | Cách kích GPIO25 trong 2 giây              |
+| ---- | ------------------------------------------ |
+| `t`  | Theo `kBuzzerUsePwm` hiện tại              |
+| `d`  | DC theo `kBuzzerActiveHigh`                |
+| `p`  | PWM theo `kBuzzerToneHz`, mặc định 2500 Hz |
+
+Nếu chỉ `p` phát được âm thanh, đặt `kBuzzerUsePwm=true` và nạp lại để Warning/Critical dùng PWM. Warning vẫn ngắt quãng, Critical vẫn liên tục. Các lượt thử trả về điều khiển cảnh báo tự động sau 2 giây. Serial ghi `BuzzerMode=DC/PWM` và `DRIVER_ERROR` nếu không cấu hình được phần cứng PWM. `Buzzer=ON` thể hiện lệnh điều khiển, chưa chứng minh module phát âm thanh.
+
+Nếu cả hai cách đều im, kiểm tra mã module, pinout, nguồn VIN–GND và mức tín hiệu mà module yêu cầu. Module có tầng driver và KY-012 lấy điện qua Signal có pinout/đặc tính khác nhau. Giữ tín hiệu nối ESP32 tương thích 3,3 V, không nối 5 V vào GPIO25. Tham khảo [LEDC ESP32](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/ledc.html) và [module active KY-012 Joy-IT](https://www.sensorkit.joy-it.net/en/sensors/ky-012).
+
+Ảnh phần cứng người dùng cung cấp có dấu `−` ở chân ngoài bên trái, `S` ở chân ngoài bên phải và không có nhãn chân giữa; còi mang mã **TMB12A05**. Loại còi này có điện áp định mức 5 V. Datasheet tham khảo ghi dải 4–8 V, nên phép thử 3,3 V chưa đủ kết luận còi hỏng. Cách bố trí ảnh khớp dạng KY-012 lấy điện qua Signal, cần xác minh đường mạch nếu muốn dùng chân giữa như VIN. [Datasheet TMB12A05](https://micmodshop.ir/wp-content/uploads/2021/09/TMB12A05-BSR6-DataSheet.pdf)
+
+Để thử riêng hai chân ngoài, tắt nguồn, tách hoàn toàn S khỏi GPIO25 và bỏ dây ở chân giữa. Nối `−` với GND, `S` với 5 V, rồi cấp nguồn thử 1–2 giây. Nếu còi kêu ở 5 V, dùng tầng driver 5 V cho điều khiển tự động và giữ `kBuzzerUsePwm=false`. Đối chiếu pinout transistor/MOSFET thực tế trước khi lắp. Phép thử nguồn này không cần nạp lại firmware.
 
 ## Hành vi truyền dữ liệu
 

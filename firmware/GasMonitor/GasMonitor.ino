@@ -22,7 +22,8 @@ constexpr uint8_t kAdcSamples = 20;
 constexpr uint32_t kAdcPeriodMs = 10;
 constexpr uint32_t kDhtPeriodMs = 2000;
 constexpr uint32_t kReportPeriodMs = 1000;
-constexpr uint32_t kOutputTestMs = 300;
+constexpr uint32_t kOutputTestMs = 2000;
+static_assert(kBuzzerToneHz >= 100 && kBuzzerToneHz <= 10000, "Buzzer tone must be 100-10000 Hz");
 
 struct AnalogChannel {
   const char* name;
@@ -103,6 +104,12 @@ bool flameCandidateReady = false;
 uint32_t flameCandidateSince = 0;
 uint32_t lastFlameMs = 0;
 bool outputTest = false;
+bool outputTestPwm = false;
+bool buzzerPwmAttached = false;
+bool buzzerOutputKnown = false;
+bool buzzerLastOn = false;
+bool buzzerLastPwm = false;
+bool buzzerDriverFault = false;
 
 void sampleAnalog(uint32_t now) {
   if (now - lastAdcMs < kAdcPeriodMs) return;
@@ -218,7 +225,40 @@ bool sensorsReady() {
 }
 
 void setBuzzer(bool on) {
-  if (kDriveBuzzer) digitalWrite(kBuzzerPin, on == kBuzzerActiveHigh ? HIGH : LOW);
+  if (!kDriveBuzzer) return;
+  const bool usePwm = outputTest ? outputTestPwm : kBuzzerUsePwm;
+  if (buzzerOutputKnown && on == buzzerLastOn && usePwm == buzzerLastPwm) return;
+
+  if (!buzzerOutputKnown || usePwm != buzzerLastPwm) {
+    if (buzzerPwmAttached) {
+      ledcDetach(kBuzzerPin);
+      buzzerPwmAttached = false;
+    }
+    buzzerDriverFault = false;
+    if (usePwm) {
+      buzzerPwmAttached = ledcAttach(kBuzzerPin, kBuzzerToneHz, 8);
+      buzzerDriverFault = !buzzerPwmAttached;
+    }
+    if (!usePwm || buzzerDriverFault) {
+      gpio_set_level(static_cast<gpio_num_t>(kBuzzerPin), kBuzzerActiveHigh ? LOW : HIGH);
+      pinMode(kBuzzerPin, OUTPUT);
+    }
+  }
+
+  if (!buzzerDriverFault) {
+    if (usePwm) {
+      const uint32_t idleDuty = kBuzzerActiveHigh ? 0 : 255;
+      buzzerDriverFault = !ledcWrite(kBuzzerPin, on ? 128 : idleDuty);
+    } else {
+      digitalWrite(kBuzzerPin, on == kBuzzerActiveHigh ? HIGH : LOW);
+    }
+    if (buzzerDriverFault) Serial.println("BUZZER DRIVER_ERROR: cannot write PWM output");
+  } else if (!buzzerOutputKnown || usePwm != buzzerLastPwm) {
+    Serial.println("BUZZER DRIVER_ERROR: cannot attach PWM on GPIO25");
+  }
+  buzzerOutputKnown = true;
+  buzzerLastOn = on;
+  buzzerLastPwm = usePwm;
 }
 
 void updateOutputs() {
@@ -251,10 +291,11 @@ void report() {
   } else {
     Serial.printf("%.1f C, %.1f %%RH\n", temperature, humidity);
   }
-  Serial.printf("Gas=%s, CO=%s, Flame=%s, Buzzer=%s\n",
+  Serial.printf("Gas=%s, CO=%s, Flame=%s, Buzzer=%s, BuzzerMode=%s\n",
                 alertLevelName(currentGasLevel()), alertLevelName(currentCoLevel()),
                 alertLevelName(currentFlameLevel()),
-                !kDriveBuzzer ? "DISABLED" : (criticalAlarm() || warningAlarm() || outputTest) ? "ON" : "OFF");
+                !kDriveBuzzer ? "DISABLED" : buzzerDriverFault ? "DRIVER_ERROR" : (criticalAlarm() || warningAlarm() || outputTest) ? "ON" : "OFF",
+                (outputTest ? outputTestPwm : kBuzzerUsePwm) ? "PWM" : "DC");
 }
 
 void setup() {
@@ -262,11 +303,6 @@ void setup() {
   pinMode(kRedPin, OUTPUT);
   pinMode(kYellowPin, OUTPUT);
   pinMode(kGreenPin, OUTPUT);
-  if (kDriveBuzzer) {
-    // Set the output latch before enabling the driver, including for active-low modules.
-    gpio_set_level(static_cast<gpio_num_t>(kBuzzerPin), kBuzzerActiveHigh ? LOW : HIGH);
-    pinMode(kBuzzerPin, OUTPUT);
-  }
   updateOutputs();
   analogReadResolution(kAdcBits);
   mq2.begin();
@@ -277,16 +313,22 @@ void setup() {
   const uint32_t now = millis();
   lastAdcMs = lastDhtMs = lastReportMs = now;
   lastUploadMs = now;
-  Serial.println("AirGuard 0.3.0 | 115200 baud | t: test red LED and enabled buzzer");
+  Serial.println("AirGuard | 115200 baud | t: configured buzzer, d: DC test, p: PWM test (2 seconds)");
   startTelemetryNetwork();
 }
 
 void loop() {
   const uint32_t now = millis();
   if (outputTest && now - outputTestStartedMs >= kOutputTestMs) outputTest = false;
-  if (Serial.available() && Serial.read() == 't' && !outputTest) {
-    outputTest = true;
-    outputTestStartedMs = now;
+  if (Serial.available()) {
+    const int command = Serial.read();
+    if (!outputTest && (command == 't' || command == 'd' || command == 'p')) {
+      outputTest = true;
+      outputTestPwm = command == 'p' || (command == 't' && kBuzzerUsePwm);
+      outputTestStartedMs = now;
+      buzzerOutputKnown = false;
+      Serial.printf("BUZZER TEST %s on GPIO25 for %lu ms\n", outputTestPwm ? "PWM" : "DC", static_cast<unsigned long>(kOutputTestMs));
+    }
   }
   sampleAnalog(now);
   sampleDigitalFlame(now);
