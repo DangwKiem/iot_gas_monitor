@@ -71,9 +71,9 @@ export const openapi = {
   openapi: '3.1.0',
   info: {
     title: 'AirGuard Local API',
-    version: '0.5.0',
+    version: '0.6.0',
     description:
-      'Local: auth/RBAC, thiết bị/key/config, raw telemetry, incident/event/acknowledgement, analytics và CSV. Web dùng cookie HttpOnly; mọi request ghi của web (kể cả login) cần X-Requested-With: AirGuard và Origin thuộc allowlist. Chưa có firmware, calibrated PPM hoặc cloud. Khoảng lọc [from,to), tối đa 90 ngày; chi tiết semantic tại docs/api/monitoring.md.',
+      'AirGuard API: thiết bị, cấu hình ngưỡng ADC, telemetry, cảnh báo Warning/Critical, lịch sử, analytics và CSV. Web dùng cookie HttpOnly; request ghi cần X-Requested-With: AirGuard và Origin thuộc allowlist. Thiết bị xác thực bằng DeviceKey. Khoảng lọc [from,to) tối đa 90 ngày; chi tiết tại docs/api/monitoring.md.',
   },
   paths: {
     '/api/v1/push/config': {

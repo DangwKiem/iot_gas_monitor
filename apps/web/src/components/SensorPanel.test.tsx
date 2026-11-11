@@ -20,6 +20,13 @@ const device = (): DeviceView => ({
     payload: telemetrySchema.parse(samplePayload()).readings[0]!,
   },
 });
+it('keeps hardware floating-point noise out of displayed measurements', () => {
+  const d = device();
+  d.latest!.payload.sensors.dht11.temperature_c = 27.600000381469727;
+  render(<SensorPanel device={d} now={now} />);
+  expect(screen.getByLabelText('Nhiệt độ')).toHaveTextContent('27.6');
+  expect(screen.getByLabelText('Nhiệt độ')).not.toHaveTextContent('27.600000381');
+});
 it('labels simulated raw gas readings without claiming PPM or safety', () => {
   render(<SensorPanel device={device()} now={now} />);
   expect(screen.getByText(/Dữ liệu mô phỏng/)).toBeInTheDocument();
@@ -49,4 +56,17 @@ it('does not show normal readings when no telemetry has arrived', () => {
   render(<SensorPanel device={d} now={now} />);
   expect(screen.getByText('Chưa có dữ liệu cảm biến')).toBeInTheDocument();
   expect(screen.queryByText('Không phát hiện')).not.toBeInTheDocument();
+});
+
+it('shows warning and critical levels on the corresponding sensor cards', () => {
+  const d = device();
+  d.latest!.payload.alert_snapshot.gas = 'warning';
+  d.latest!.payload.alert_snapshot.co = 'critical';
+  d.latest!.payload.alert_snapshot.flame = 'critical';
+  d.latest!.payload.sensors.flame.detected = true;
+  render(<SensorPanel device={d} now={now} />);
+  expect(screen.getByLabelText('MQ-2')).toHaveClass('sensor-warning');
+  expect(screen.getByLabelText('MQ-7')).toHaveClass('sensor-critical');
+  expect(screen.getByText('Warning · Cảnh báo')).toBeInTheDocument();
+  expect(screen.getAllByText('Critical · Nguy cấp')).toHaveLength(2);
 });

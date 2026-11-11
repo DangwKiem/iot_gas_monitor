@@ -1,6 +1,6 @@
 # Vận hành phần mềm local v0.3
 
-Firmware và cloud chưa triển khai. Các lệnh chạy tại thư mục gốc repository. Không commit `.env`, passphrase, key hoặc backup. Docker Desktop Linux Engine phải hoạt động.
+Firmware ESP32 và kết nối Wi-Fi có hướng dẫn tại [firmware](../../firmware/README.md). Cloud chưa triển khai. Các lệnh chạy tại thư mục gốc repository. Không commit `.env`, NetworkConfig.h, passphrase, key hoặc backup. Docker Desktop Linux Engine phải hoạt động.
 
 ## Nâng cấp
 

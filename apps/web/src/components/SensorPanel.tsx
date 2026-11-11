@@ -13,6 +13,8 @@ const qualityText = {
 export const alertText = {
   normal: 'Không kích hoạt',
   active: 'Đang cảnh báo',
+  warning: 'Warning · Cảnh báo',
+  critical: 'Critical · Nguy cấp',
   unknown: 'Chưa xác định',
   not_configured: 'Chưa cấu hình đánh giá',
 };
@@ -28,14 +30,14 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
     <section aria-label={`Cảm biến ${device.name}`}>
       {device.source_kind === 'simulator' ? (
         <div className="notice simulation">
-          <Activity size={16} /> Dữ liệu mô phỏng — không phải số đo phần cứng
+          <Activity size={16} /> Dữ liệu mô phỏng
         </div>
       ) : null}
       {!reading ? (
         <div className="empty">
           <Activity size={30} />
           <h3>Chưa có dữ liệu cảm biến</h3>
-          <p>Đăng ký credential và kết nối thiết bị hoặc simulator để bắt đầu.</p>
+          <p>Kết nối thiết bị để bắt đầu giám sát.</p>
         </div>
       ) : (
         <>
@@ -64,6 +66,7 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
                 sensor: reading.payload.sensors.mq2,
                 icon: Wind,
                 color: 'teal',
+                level: reading.payload.alert_snapshot.gas,
               },
               {
                 title: 'MQ-7',
@@ -72,9 +75,14 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
                 sensor: reading.payload.sensors.mq7,
                 icon: Wind,
                 color: 'purple',
+                level: reading.payload.alert_snapshot.co,
               },
-            ].map(({ title, value, unit, sensor, icon: Icon, color }) => (
-              <article className="panel sensor-card" key={title} aria-label={title}>
+            ].map(({ title, value, unit, sensor, icon: Icon, color, level }) => (
+              <article
+                className={`panel sensor-card sensor-${level ?? 'normal'}`}
+                key={title}
+                aria-label={title}
+              >
                 <div className="sensor-heading">
                   <span>{title}</span>
                   <span className={`icon-box ${color}`}>
@@ -82,9 +90,10 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
                   </span>
                 </div>
                 <div className="reading-value">
-                  {value ?? '—'} <small>{unit}</small>
+                  {value === null ? '—' : Math.round(value * 10) / 10} <small>{unit}</small>
                 </div>
                 <p>{qualityText[sensor.quality]}</p>
+                {level ? <span className={`badge level-${level}`}>{alertText[level]}</span> : null}
                 <span className="freshness">
                   {sensorFreshness(
                     reading,
@@ -99,7 +108,7 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
           <div className="panel alert-strip">
             <Flame size={22} />
             <div>
-              <strong>Flame Sensor</strong>
+              <strong>Cảm biến lửa</strong>
               <p>
                 {reading.payload.sensors.flame.detected === null
                   ? 'Chưa xác định'
@@ -108,21 +117,11 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
                     : 'Không phát hiện'}
               </p>
             </div>
-            <span
-              className={`badge ${reading.payload.alert_snapshot.flame === 'active' ? 'danger' : ''}`}
-            >
+            <span className={`badge level-${reading.payload.alert_snapshot.flame}`}>
               {alertText[reading.payload.alert_snapshot.flame]}
             </span>
             <span className="muted">
-              Lệnh còi: {reading.payload.alert_snapshot.buzzer_commanded_on ? 'Bật' : 'Tắt'}
-            </span>
-          </div>
-          <div className="gas-policies">
-            <span>
-              Gas: <strong>{alertText[reading.payload.alert_snapshot.gas]}</strong>
-            </span>
-            <span>
-              CO: <strong>{alertText[reading.payload.alert_snapshot.co]}</strong>
+              Còi: {reading.payload.alert_snapshot.buzzer_commanded_on ? 'Bật' : 'Tắt'}
             </span>
           </div>
         </>

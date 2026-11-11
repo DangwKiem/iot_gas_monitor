@@ -11,3 +11,5 @@ backups/
 *.backup.enc
 *.partial-*
 reports/
+firmware/GasMonitor/NetworkConfig.h
+firmware/GasMonitor/build/

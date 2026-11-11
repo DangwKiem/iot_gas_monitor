@@ -138,14 +138,10 @@ export default function SettingsPage({
         </button>
         <h2>Chính sách cảnh báo</h2>
         <p className="muted">
-          Không cung cấp lệnh tắt còi từ dashboard. Ngưỡng gas/CO chưa được cấu hình khi chưa có căn
-          cứ đo lường. Chu kỳ truyền dữ liệu được quản lý riêng tại chi tiết thiết bị.
+          Điều chỉnh ngưỡng cảnh báo và chu kỳ gửi tại trang chi tiết thiết bị.
         </p>
         <h2>Phiên đăng nhập</h2>
-        <p className="muted">
-          Phiên dùng cookie HttpOnly, hết hạn sau 8 giờ. Refresh trang không cần đăng nhập lại. Đăng
-          xuất thu hồi phiên trên server.
-        </p>
+        <p className="muted">Phiên đăng nhập có hiệu lực trong 8 giờ.</p>
       </section>
     </>
   );

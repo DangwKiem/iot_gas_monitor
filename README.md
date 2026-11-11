@@ -1,12 +1,13 @@
 # AirGuard — IoT Gas Monitor
 
-Hệ thống giám sát tín hiệu cảm biến môi trường/gas, có dashboard tiếng Việt và thông báo Telegram. Hiện chạy **local trên máy tính bằng simulator**, chưa cần ESP32 để thử phần mềm.
+Hệ thống giám sát khí gas, CO, lửa, nhiệt độ và độ ẩm từ ESP32 qua Wi-Fi. Dashboard tiếng Việt hiển thị dữ liệu trực tiếp, quản lý ngưỡng Warning/Critical và lịch sử sự cố, hỗ trợ thông báo Telegram/Web Push. Có simulator để kiểm thử phần mềm local.
 
-> **Giới hạn an toàn:** Đây là dự án nghiên cứu/học tập, không phải thiết bị cảnh báo an toàn sinh mạng được chứng nhận. MQ-2/MQ-7 hiện chỉ hiển thị tín hiệu ADC thô, **không quy đổi PPM/AQI**. Firmware, đấu dây và cảnh báo cục bộ trên phần cứng chưa triển khai.
+> **Giới hạn an toàn:** Đây là dự án nghiên cứu/học tập, không phải thiết bị cảnh báo an toàn sinh mạng được chứng nhận. MQ-2/MQ-7 hiện chỉ hiển thị tín hiệu ADC thô, **không quy đổi PPM/AQI**. Có [firmware ESP32 đọc cảm biến và gửi telemetry qua Wi-Fi](firmware/README.md#kết-nối-esp32-với-web-local), chưa nghiệm thu trên phần cứng thật.
 
 ## Mục lục
 
 - [Trạng thái hiện tại](#trạng-thái-hiện-tại)
+- [Kết nối ESP32 và ngưỡng cảnh báo](firmware/README.md)
 - [Chuẩn bị trước khi cài](#chuẩn-bị-trước-khi-cài)
 - [Cài đặt lần đầu trên Windows](#cài-đặt-lần-đầu-trên-windows)
 - [Tạo thiết bị và chạy simulator](#tạo-thiết-bị-và-chạy-simulator)
@@ -37,7 +38,7 @@ Hệ thống giám sát tín hiệu cảm biến môi trường/gas, có dashboa
 | Telegram            | Warning/critical qua hàng đợi PostgreSQL, chống tạo job lặp theo sự cố/mức độ, retry/backoff; mặc định tắt         |
 | Vận hành            | Nhật ký quản trị; backup mã hóa/restore DB riêng; retention/rollup có dry-run; CI và load runner                   |
 
-**Chưa hoàn thành/nghiệm thu:** firmware ESP32 và HIL, xác minh nguồn/heater/hiệu chuẩn, cloud, tải 30 phút/soak 24 giờ, lịch backup/maintenance ngoài hệ điều hành và phân trang lịch sử config trên 100 phiên bản gần nhất. Không tự chạy purge, không tự xóa backup. Có công cụ không đồng nghĩa đã vượt mọi tiêu chí nghiệm thu trong [PLAN.md](PLAN.md).
+Firmware ESP32 0.3.0 đã có đọc cảm biến, Warning/Critical, LED/còi và đồng bộ ngưỡng từ web. **Chưa nghiệm thu phần cứng:** điện áp tín hiệu, heater/hiệu chuẩn MQ-7 và HIL. Cloud, tải 30 phút/soak 24 giờ, lịch backup/maintenance ngoài hệ điều hành và phân trang config trên 100 phiên bản vẫn theo [PLAN.md](PLAN.md).
 
 ### Các thành phần chạy như thế nào?
 
@@ -325,7 +326,7 @@ Không chạy hai simulator cùng lúc với cùng Device ID khi làm bài thử
 Với chu kỳ 5 giây, cảnh báo đầu tiên xuất hiện sau khoảng 10 giây và pha active kéo dài khoảng 20 giây. Nếu đổi chu kỳ truyền, thời gian pha cũng thay đổi.
 
 - Mở **Cảnh báo & sự cố** để thấy ba incident mỗi vòng, xem chi tiết/timeline.
-- Snapshot hiện gán **Gas/CO = warning**, **Flame = critical**. Không có ngưỡng ADC cao hơn để tự nâng Gas/CO lên critical; API event có thể mang mức critical theo contract.
+- Kịch bản simulator dùng **Gas/CO = warning**, **Flame = critical**. Firmware ESP32 0.3.0 đánh giá Warning/Critical theo ngưỡng ADC cấu hình tại trang chi tiết thiết bị; xem [ngưỡng và LED/còi](firmware/README.md#ngưỡng-và-trạng-thái-cảnh-báo).
 - Admin/operator có thể **Xác nhận đã xem**. Đây không phải lệnh tắt còi hoặc kết thúc incident.
 - Đây là kịch bản lập trình sẵn, không dựa trên nồng độ đo thật. Gas vẫn `uncalibrated`, `concentration_ppm=null`, heater MQ-7 `unverified`; không có lệnh tới còi vật lý.
 - Nếu dừng trong pha active, incident có thể còn chưa kết thúc. Offline hoặc chuyển về chế độ Gas/CO `not_configured` không tự đóng nó; cần nhận trạng thái normal hợp lệ. Chạy lại kịch bản danger sẽ có pha normal đầu vòng.
@@ -713,6 +714,7 @@ apps/api/              REST API, auth/RBAC, telemetry, incidents, Telegram worke
 apps/web/              React/Vite/Tailwind dashboard tiếng Việt
 packages/contracts/    Zod schemas và shared types
 packages/database/     Prisma schema, migrations, database client
+firmware/              Arduino sketch ESP32, Serial, Wi-Fi và telemetry API
 tools/device-simulator/ Nguồn dữ liệu mô phỏng
 tools/operations/      Backup/restore mã hóa và maintenance CLI
 tests/e2e/             Chromium E2E

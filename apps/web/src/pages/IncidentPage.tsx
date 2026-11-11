@@ -53,7 +53,9 @@ export default function IncidentPage({ user }: { user: UserView }) {
               <span className={`badge ${incident.status === 'active' ? 'danger' : ''}`}>
                 {incident.status === 'active' ? 'Chưa kết thúc' : 'Đã kết thúc'}
               </span>
-              <span className="badge">{incident.severity}</span>
+              <span className={`badge level-${incident.severity}`}>
+                {incident.severity === 'critical' ? 'Critical · Nguy cấp' : 'Warning · Cảnh báo'}
+              </span>
               {incident.source_kind === 'simulator' ? (
                 <span className="badge simulation">Dữ liệu mô phỏng</span>
               ) : null}
@@ -68,18 +70,10 @@ export default function IncidentPage({ user }: { user: UserView }) {
                 <dd>{dateText(incident.ended_at)}</dd>
               </div>
               <div>
-                <dt>Server quan sát đầu tiên</dt>
+                <dt>Ghi nhận đầu tiên</dt>
                 <dd>{dateText(incident.first_observed_at)}</dd>
               </div>
-              <div>
-                <dt>Nguồn lịch sử</dt>
-                <dd>{incident.origin}</dd>
-              </div>
             </dl>
-            <p className="caption">
-              Chưa có sự kiện kết thúc không đồng nghĩa thiết bị vẫn đang đo được nguy hiểm. Kiểm
-              tra kết nối và chất lượng dữ liệu. Xác nhận đã xem không tắt còi.
-            </p>
           </section>
           <section className="panel feature-section">
             <h2>Xác nhận sự cố</h2>
@@ -116,7 +110,13 @@ export default function IncidentPage({ user }: { user: UserView }) {
             <ol className="timeline">
               {incident.events.map((event) => (
                 <li key={event.id}>
-                  <strong>{event.transition === 'started' ? 'Bắt đầu' : 'Kết thúc'}</strong>
+                  <strong>
+                    {event.transition === 'started'
+                      ? 'Bắt đầu'
+                      : event.transition === 'escalated'
+                        ? 'Nâng mức Critical'
+                        : 'Kết thúc'}
+                  </strong>
                   <p>Thời điểm thiết bị: {dateText(event.occurred_at)}</p>
                   <small>
                     Server nhận: {dateText(event.received_at)} · seq {event.seq}

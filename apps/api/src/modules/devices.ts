@@ -10,6 +10,7 @@ import {
   configAckSchema,
   heartbeatSchema,
   counterSchema,
+  deviceConfigSchema,
 } from '@iot/contracts';
 import type { FeatureContext } from '../lib/context.js';
 import { audit, lockDevice } from '../lib/context.js';
@@ -39,7 +40,7 @@ export function registerDeviceTransport(
     }
     reply(res, {
       version: config.version,
-      config: config.config,
+      config: deviceConfigSchema.parse(config.config),
       content_hash: config.contentHash,
     });
   });
@@ -378,12 +379,19 @@ export function registerDevices(router: Router, { db, reply, admin, publish }: F
           'CONFIG_VERSION_CONFLICT',
           'Cấu hình đã thay đổi. Tải lại trước khi lưu.',
         );
+      const previousConfig = await tx.deviceConfig.findUniqueOrThrow({
+        where: { deviceId_version: { deviceId: id, version: device.desiredConfigVersion } },
+      });
+      const nextConfig = deviceConfigSchema.parse({
+        ...deviceConfigSchema.parse(previousConfig.config),
+        ...input.config,
+      });
       const row = await tx.deviceConfig.create({
         data: {
           deviceId: id,
           version: device.desiredConfigVersion + 1,
-          config: input.config,
-          contentHash: hashSecret(JSON.stringify(input.config)),
+          config: nextConfig,
+          contentHash: hashSecret(JSON.stringify(nextConfig)),
           createdBy: res.locals.session.user.id as string,
         },
       });
@@ -396,7 +404,7 @@ export function registerDevices(router: Router, { db, reply, admin, publish }: F
     });
     reply(res, {
       version: config.version,
-      config: config.config,
+      config: deviceConfigSchema.parse(config.config),
       content_hash: config.contentHash,
     });
     publish('device.config.updated', id);

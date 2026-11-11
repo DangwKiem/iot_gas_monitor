@@ -1,0 +1,118 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import request from 'supertest';
+import { createDatabase } from '@iot/database';
+import { createApp } from '../src/app.js';
+import { featureFixture } from './helpers.js';
+import { telegramNotifier } from '../src/modules/notifications.js';
+import { defaultAlertPolicy } from '@iot/contracts';
+import { hashSecret } from '../src/modules/auth.js';
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)('threshold warning and critical lifecycle', () => {
+  const db = createDatabase(process.env.TEST_DATABASE_URL ?? 'postgresql://localhost/iot_test');
+  const app = createApp({ db, origin: 'http://localhost:5173', notify: telegramNotifier(true) });
+  let f: Awaited<ReturnType<typeof featureFixture>>;
+  beforeAll(async () => {
+    f = await featureFixture(db, app, 'thresholds');
+  });
+  afterAll(() => db.$disconnect());
+
+  it('escalates the same incident, notifies each severity once, and preserves incidents on faults', async () => {
+    const send = async (seq: number, state: string, invalid = false) => {
+      const payload = f.payload(seq);
+      payload.readings[0]!.alert_snapshot.gas = state;
+      if (invalid)
+        Object.assign(payload.readings[0]!.sensors.mq2, {
+          quality: 'invalid',
+          adc_raw: null,
+          adc_pin_mv: null,
+        });
+      return request(app).post('/api/v1/device/telemetry').set(f.deviceHeaders).send(payload);
+    };
+    expect((await send(1, 'warning')).status).toBe(200);
+    const first = await db.alertIncident.findFirstOrThrow({
+      where: { deviceId: f.deviceId, condition: 'gas' },
+    });
+    expect(first.severity).toBe('warning');
+    expect((await send(2, 'critical')).status).toBe(200);
+    expect((await send(2, 'critical')).status).toBe(200);
+    expect((await send(3, 'warning')).status).toBe(200);
+    const states = await request(app)
+      .get(`/api/v1/alerts/states?device_id=${f.deviceId}`)
+      .set(f.headers.viewer!);
+    expect(
+      states.body.data.find((s: { condition: string }) => s.condition === 'gas').severity,
+    ).toBe('warning');
+    expect(
+      await db.alertIncident.count({ where: { deviceId: f.deviceId, condition: 'gas' } }),
+    ).toBe(1);
+    expect((await db.alertIncident.findUniqueOrThrow({ where: { id: first.id } })).severity).toBe(
+      'critical',
+    );
+    expect(
+      await db.alertEvent.count({ where: { incidentId: first.id, transition: 'escalated' } }),
+    ).toBe(1);
+    const jobs = await db.telegramNotification.findMany({
+      where: { incidentId: first.id },
+      orderBy: { severity: 'asc' },
+    });
+    expect(jobs.map((j) => j.severity)).toEqual(['critical', 'warning']);
+    expect((await send(4, 'normal', true)).status).toBe(200);
+    expect((await db.alertIncident.findUniqueOrThrow({ where: { id: first.id } })).status).toBe(
+      'active',
+    );
+    expect((await send(5, 'normal')).status).toBe(200);
+    expect((await db.alertIncident.findUniqueOrThrow({ where: { id: first.id } })).status).toBe(
+      'ended',
+    );
+    expect((await send(0, 'critical')).status).toBe(200);
+    expect(
+      await db.alertIncident.count({ where: { deviceId: f.deviceId, status: 'active' } }),
+    ).toBe(0);
+  });
+
+  it('always records flame activation as critical', async () => {
+    const payload = f.payload(6);
+    payload.readings[0]!.sensors.flame.detected = true;
+    payload.readings[0]!.alert_snapshot.flame = 'critical';
+    const result = await request(app)
+      .post('/api/v1/device/telemetry')
+      .set(f.deviceHeaders)
+      .send(payload);
+    expect(result.status).toBe(200);
+    expect(
+      (
+        await db.alertIncident.findFirstOrThrow({
+          where: { deviceId: f.deviceId, condition: 'flame' },
+        })
+      ).severity,
+    ).toBe('critical');
+  });
+
+  it('versions threshold configuration and preserves it when an older client changes only the interval', async () => {
+    const url = `/api/v1/devices/${f.deviceId}/config`;
+    const policy = structuredClone(defaultAlertPolicy);
+    policy.gas.warning_on = 3250;
+    const saved = await request(app)
+      .put(url)
+      .set(f.headers.admin!)
+      .send({
+        expected_version: 1,
+        config: { reporting_interval_ms: 5000, alert_policy: policy },
+      });
+    expect(saved.status).toBe(200);
+    const changed = await request(app)
+      .put(url)
+      .set(f.headers.admin!)
+      .send({
+        expected_version: 2,
+        config: { reporting_interval_ms: 10000 },
+      });
+    expect(changed.status).toBe(200);
+    expect(changed.body.data.config.alert_policy).toEqual(policy);
+    expect(changed.body.data.content_hash).toBe(
+      hashSecret(JSON.stringify(changed.body.data.config)),
+    );
+    const transport = await request(app).get('/api/v1/device/config').set(f.deviceHeaders);
+    expect(transport.body.data.content_hash).toBe(changed.body.data.content_hash);
+  });
+});

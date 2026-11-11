@@ -49,7 +49,7 @@ async function updateState(
 async function snapshotEvent(
   tx: Tx,
   incident: AlertIncident,
-  transition: 'started' | 'ended',
+  transition: 'started' | 'ended' | 'escalated',
   record: Reading,
   now: Date,
 ) {
@@ -61,6 +61,7 @@ async function snapshotEvent(
     seq: record.seq,
     sampled_at: record.sampled_at,
     origin: 'snapshot',
+    severity: incident.severity,
   };
   await tx.alertEvent.create({
     data: {
@@ -92,7 +93,9 @@ export async function applySnapshot(
       where: { deviceId_condition: { deviceId, condition } },
     });
     if (!newer(record, current)) continue;
-    let state = record.alert_snapshot[condition];
+    const reported = record.alert_snapshot[condition];
+    const severity = condition === 'flame' || reported === 'critical' ? 'critical' : 'warning';
+    let state = reported === 'warning' || reported === 'critical' ? 'active' : reported;
     const sensor =
       condition === 'flame'
         ? record.sensors.flame
@@ -100,7 +103,10 @@ export async function applySnapshot(
           ? record.sensors.mq2
           : record.sensors.mq7;
     // Missing/invalid data can never clear an existing incident.
-    if (state === 'normal' && ['invalid', 'warming_up', 'heating'].includes(sensor.quality))
+    if (
+      ['normal', 'active'].includes(state) &&
+      ['invalid', 'warming_up', 'heating'].includes(sensor.quality)
+    )
       state = 'unknown';
     let incident = await tx.alertIncident.findFirst({
       where: { deviceId, condition, status: 'active' },
@@ -134,13 +140,21 @@ export async function applySnapshot(
             deviceId,
             condition,
             externalId,
-            severity: condition === 'flame' ? 'critical' : 'warning',
+            severity,
             origin: 'snapshot',
             startedAt: record.sampled_at,
             firstObservedAt: now,
           },
         });
         await snapshotEvent(tx, incident, 'started', record, now);
+        await notify?.(tx, incident);
+        eventsChanged = true;
+      } else if (severity === 'critical' && incident.severity !== 'critical') {
+        incident = await tx.alertIncident.update({
+          where: { id: incident.id },
+          data: { severity: 'critical' },
+        });
+        await snapshotEvent(tx, incident, 'escalated', record, now);
         await notify?.(tx, incident);
         eventsChanged = true;
       }
@@ -163,7 +177,9 @@ export async function applySnapshot(
       eventsChanged = true;
       incident = null;
     }
-    await updateState(tx, deviceId, condition, state, incident?.id ?? null, record, now);
+    const currentState =
+      state === 'active' && (reported === 'warning' || reported === 'critical') ? reported : state;
+    await updateState(tx, deviceId, condition, currentState, incident?.id ?? null, record, now);
   }
   return eventsChanged;
 }
@@ -374,10 +390,14 @@ export function registerAlerts(router: Router, { db, reply, operator, publish }:
       rows.map((s) => ({
         device_id: s.deviceId,
         condition: s.condition,
-        state: s.state,
+        state: s.state === 'warning' || s.state === 'critical' ? 'active' : s.state,
         incident_id: s.incidentId,
         updated_at: s.updatedAt.toISOString(),
         unresolved: s.incident?.status === 'active',
+        severity:
+          s.state === 'warning' || s.state === 'critical'
+            ? s.state
+            : (s.incident?.severity ?? null),
       })),
     );
   });

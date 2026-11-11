@@ -45,7 +45,6 @@ export function App() {
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [connected, setConnected] = useState(false);
-  const [notice, setNotice] = useState(false);
   const [theme, setTheme] = useState(() =>
     localStorage.getItem('airguard.theme.v1') === 'light' ? 'light' : 'dark',
   );
@@ -73,7 +72,8 @@ export function App() {
   });
   const states = useQuery({
     queryKey: ['alert-states'],
-    queryFn: () => api<{ device_id: string; unresolved: boolean }[]>('/alerts/states'),
+    queryFn: () =>
+      api<{ device_id: string; unresolved: boolean; severity?: string | null }[]>('/alerts/states'),
     enabled: !!session,
     refetchInterval: 10000,
   });
@@ -139,10 +139,7 @@ export function App() {
     socket.on('connect_error', () => setConnected(false));
     socket.on('telemetry.created', () => invalidate('devices', 'device', 'readings'));
     socket.on('alert.state.changed', refreshAlerts);
-    socket.on('alert.event.created', () => {
-      refreshAlerts();
-      setNotice(true);
-    });
+    socket.on('alert.event.created', refreshAlerts);
     socket.on('alert.acknowledged', refreshAlerts);
     for (const event of [
       'device.updated',
@@ -171,7 +168,6 @@ export function App() {
     queryClient.setQueryData(['session'], null);
     setSelectedId('');
     setLogoutError(null);
-    setNotice(false);
   }
   if (sessionQuery.isPending)
     return (
@@ -195,6 +191,10 @@ export function App() {
       ? null
       : (states.data?.filter((s) => s.unresolved && devices.some((d) => d.id === s.device_id))
           .length ?? 0);
+  const criticalIncidents =
+    states.data?.filter(
+      (s) => s.unresolved && s.severity === 'critical' && devices.some((d) => d.id === s.device_id),
+    ).length ?? 0;
   return (
     <div className="app-layout">
       <aside className="sidebar">
@@ -228,13 +228,8 @@ export function App() {
         <div className="sidebar-bottom">
           <div className="local-tag">
             <Server size={16} />
-            <span>Môi trường local</span>
+            <span>Giám sát khí gas</span>
           </div>
-          <p>
-            Dự án nghiên cứu IoT
-            <br />
-            Không dùng thay hệ thống an toàn đạt chứng nhận.
-          </p>
         </div>
       </aside>
       <div className="workspace">
@@ -245,7 +240,7 @@ export function App() {
           <div className="topbar-actions">
             <span className={`badge ${connected ? 'success' : ''}`}>
               <span className={`status-dot ${connected ? 'online' : 'offline'}`} />
-              {connected ? 'Realtime kết nối' : 'Đang dùng REST / mất realtime'}
+              {connected ? 'Realtime kết nối' : 'Đang kết nối lại'}
             </span>
             <button
               aria-label="Đổi giao diện"
@@ -260,18 +255,22 @@ export function App() {
           </div>
         </header>
         <main className="content">
+          {activeIncidents ? (
+            <div
+              className={`notice level-${criticalIncidents ? 'critical' : 'warning'}`}
+              role="alert"
+            >
+              <Bell size={20} />
+              <strong>
+                {criticalIncidents ? 'Critical' : 'Warning'} · {activeIncidents} sự cố chưa kết thúc
+              </strong>
+              <Link to="/app/alerts">Xem và xử lý cảnh báo</Link>
+            </div>
+          ) : null}
           {logoutError ? (
             <p className="notice error" role="alert">
               {logoutError}
             </p>
-          ) : null}
-          {notice ? (
-            <div className="notice" role="status">
-              Có cập nhật sự cố. <Link to="/app/alerts">Xem cảnh báo & sự cố</Link>
-              <button onClick={() => setNotice(false)} aria-label="Đóng thông báo">
-                Đóng
-              </button>
-            </div>
           ) : null}
           {devicesQuery.isError ? (
             <div className="notice error" role="alert">

@@ -200,7 +200,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
             <button className="primary">Áp dụng bộ lọc</button>
           </form>
           {selected.source_kind === 'simulator' ? (
-            <div className="notice simulation">Dữ liệu mô phỏng — không phải số đo phần cứng.</div>
+            <div className="notice simulation">Dữ liệu mô phỏng</div>
           ) : null}
           <div className="button-row">
             <button onClick={() => csv.mutate()} disabled={csv.isPending}>
@@ -327,10 +327,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="caption">
-                  Mẫu invalid/warming_up/heating không được tính vào thống kê. Khoảng không có mẫu
-                  là gap, không phải giá trị 0. Bucket theo UTC.
-                </p>
+                <p className="caption">Khoảng trống thể hiện thời gian chưa có dữ liệu hợp lệ.</p>
               </section>
             </>
           ) : null}
@@ -400,10 +397,6 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
               </button>
             ) : null}
           </section>
-          <p className="notice">
-            MQ-2/MQ-7 chỉ thống kê tín hiệu ADC; không phải PPM/AQI. Lọc adc_bits chỉ áp dụng thống
-            kê ADC. Mẫu chưa đồng bộ giờ không xuất hiện khi lọc theo thời điểm đo.
-          </p>
         </>
       )}
     </>

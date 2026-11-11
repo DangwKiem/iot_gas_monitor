@@ -1,4 +1,4 @@
-# Monitoring local v0.5
+# Monitoring v0.6
 
 Đường dẫn bên dưới có prefix `/api/v1`. OpenAPI tại `/openapi.json`; schemas thực thi trong `packages/contracts/src`. Web dùng session cookie và `X-Requested-With: AirGuard` cho mutation. Device endpoints chỉ dùng `Authorization: DeviceKey <key_id>.<secret>`.
 
@@ -21,7 +21,22 @@ Các thay đổi quản trị và xác nhận sự cố ghi audit log trong cùn
 3. `GET /device/config`: device tải `{version,config,content_hash}`. `If-None-Match` với ETag đã nhận trả 304 nếu không đổi. Hash SHA-256 của JSON canonical theo thứ tự field trong schema: `{"reporting_interval_ms":10000}`.
 4. `POST /device/config/ack`: `{ "version": 2, "content_hash": "<64 hex>", "status": "applied", "reason": "" }`. Version/hash phải tồn tại/khớp. `status` có thể `rejected`; retry cùng device/version/status không tạo ACK mới. ACK applied cũ không làm giảm applied_version. ACK là báo cáo từ thiết bị, không phải bằng chứng kiểm thử phần cứng.
 
-Chỉ cấu hình chu kỳ truyền **1–60 giây**. Không cho cấu hình tắt còi, heater, ngưỡng ADC/PPM hoặc safety policy chưa được xác minh. Desired khác applied không có nghĩa cấu hình đã áp dụng. Simulator tự GET/verify hash/ACK trước vòng gửi tiếp theo; `SIM_INTERVAL_MS` chỉ là giá trị dự phòng khi chưa tải được cấu hình. Firmware chưa triển khai.
+Cấu hình hỗ trợ chu kỳ **1–60 giây** và trường `alert_policy` tùy chọn với ngưỡng ADC. Cấu hình cũ chỉ có chu kỳ gửi giữ nguyên định dạng/hash. Khi cập nhật riêng chu kỳ, server giữ policy đang có. Firmware 0.3.0 và simulator kiểm tra hash của JSON canonical, áp dụng và ACK; firmware lưu cấu hình vào NVS trước ACK.
+
+```json
+{
+  "reporting_interval_ms": 5000,
+  "alert_policy": {
+    "gas": { "warning_on": 3200, "warning_off": 2900, "critical_on": 3700, "critical_off": 3400 },
+    "co": { "warning_on": 1000, "warning_off": 900, "critical_on": 1500, "critical_off": 1300 },
+    "flame": { "alarm_on": 1000, "alarm_off": 1500, "active_below": true }
+  }
+}
+```
+
+ADC trong khoảng 0–4094. Gas/CO cần `warning_off < warning_on ≤ critical_off < critical_on`. Flame cần `alarm_on < alarm_off` nếu active_below, hoặc chiều ngược lại nếu active-high. Không suy ra PPM/AQI từ các ngưỡng ADC. Cấu hình không có lệnh tắt còi hoặc thay heater.
+
+Telemetry nhận thêm snapshot `warning` và `critical`, cùng các giá trị cũ `active`, `normal`, `unknown`, `not_configured`. Snapshot `active` cũ vẫn có severity gas/CO warning, Flame critical. Các mức mới cập nhật severity hiện tại; incident giữ mức cao nhất và thêm sự kiện `escalated` khi tăng Warning → Critical. Hàng đợi Telegram/Web Push được enqueue trong cùng transaction và dedup theo incident/severity. Snapshot lỗi/unknown không kết thúc incident. `/alerts/states` giữ state active cho client cũ và bổ sung severity hiện tại.
 
 ## Kết nối
 

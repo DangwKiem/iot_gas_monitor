@@ -1,4 +1,4 @@
-import { Cpu, Radio, Server, Bell, ArrowUpRight, ShieldCheck } from 'lucide-react';
+import { Cpu, Radio, Server, Bell, ArrowUpRight } from 'lucide-react';
 import { Link } from 'react-router';
 import type { DeviceView } from '@iot/contracts';
 import { SensorPanel } from '../components/SensorPanel.js';
@@ -25,7 +25,6 @@ export default function OverviewPage({
           <h1>Tổng quan hệ thống</h1>
           <p>Quan sát kết nối và dữ liệu cảm biến tại một nơi.</p>
         </div>
-        <span className="badge">Local workspace</span>
       </div>
       <div className="stats-grid">
         {[
@@ -33,13 +32,13 @@ export default function OverviewPage({
             title: 'Tổng thiết bị',
             value: devices.length,
             icon: Cpu,
-            caption: 'Nguồn dữ liệu chưa lưu trữ',
+            caption: 'Thiết bị đang quản lý',
           },
           {
             title: 'Đang online',
             value: online,
             icon: Radio,
-            caption: 'Theo last_seen và chu kỳ gửi',
+            caption: 'Thiết bị đang kết nối',
           },
           {
             title: 'Chưa online',
@@ -93,20 +92,13 @@ export default function OverviewPage({
         <div className="panel empty">
           <Cpu size={34} />
           <h3>Chưa có thiết bị</h3>
-          <p>Đăng ký simulator hoặc ESP32. Dashboard không tự tạo dữ liệu.</p>
+          <p>Thêm thiết bị để bắt đầu giám sát.</p>
           <Link className="primary" to="/app/devices">
             Quản lý thiết bị
             <ArrowUpRight size={16} />
           </Link>
         </div>
       )}
-      <div className="notice">
-        <ShieldCheck size={18} />
-        <span>
-          MQ-2/MQ-7 đang dùng tín hiệu thô. Chưa công bố nồng độ khí hoặc chỉ số chất lượng không
-          khí.
-        </span>
-      </div>
     </>
   );
 }

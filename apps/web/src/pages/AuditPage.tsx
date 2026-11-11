@@ -26,7 +26,7 @@ export default function AuditPage({ user }: { user: UserView }) {
   return (
     <>
       <PageTitle eyebrow="AUDIT TRAIL" title="Nhật ký quản trị">
-        <p>Lịch sử thay đổi và người thực hiện; không chứa raw key hoặc mật khẩu.</p>
+        <p>Lịch sử thao tác quản trị và người thực hiện.</p>
       </PageTitle>
       <form className="panel filter-grid" onSubmit={submit}>
         <label>
@@ -39,7 +39,7 @@ export default function AuditPage({ user }: { user: UserView }) {
           </select>
         </label>
         <label>
-          Resource ID
+          Mã đối tượng
           <input name="resource_id" maxLength={100} />
         </label>
         <label>

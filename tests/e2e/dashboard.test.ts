@@ -81,6 +81,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     await page.getByText('Realtime kết nối', { exact: true }).waitFor();
     await page.getByRole('navigation').getByRole('link', { name: 'Thiết bị', exact: true }).click();
     await page.getByLabel('Tên thiết bị').fill('Browser simulator');
+    await page.getByLabel('Nguồn dữ liệu').selectOption('simulator');
     await page.getByRole('button', { name: 'Thêm thiết bị' }).click();
     await page.getByRole('button', { name: 'Cấp key' }).click();
     const keyPanel = page.getByRole('region', { name: 'Credential mới' });
@@ -105,9 +106,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     expect(response.status).toBe(200);
     await page.getByRole('button', { name: 'Đã lưu, đóng' }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Giám sát trực tiếp' }).click();
-    await page
-      .getByText('Dữ liệu mô phỏng — không phải số đo phần cứng', { exact: true })
-      .waitFor();
+    await page.getByText('Dữ liệu mô phỏng', { exact: true }).waitFor();
     await page.getByLabel('Nhiệt độ', { exact: true }).waitFor();
     expect(await page.getByLabel('Nhiệt độ', { exact: true }).innerText()).toContain('27.1');
     await page.getByRole('img', { name: /Biểu đồ nhiệt độ/ }).waitFor();
@@ -188,6 +187,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     await page.getByRole('navigation').getByRole('link', { name: 'Thiết bị', exact: true }).click();
     await page.getByRole('link', { name: 'Browser simulator', exact: true }).click();
     await page.getByLabel('Chu kỳ gửi (giây)').fill('10');
+    await page.locator('input[name="gas_warning_on"]').fill('3250');
     await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click();
     await page.getByText('Mong muốn: v2', { exact: true }).waitFor();
     const configResponse = await fetch(`${apiUrl}/api/v1/device/config`, {
@@ -195,6 +195,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     });
     const config = (await configResponse.json()).data;
     expect(config.version).toBe(2);
+    expect(config.config.alert_policy.gas.warning_on).toBe(3250);
+    expect(config.config.alert_policy.co.critical_on).toBe(1500);
     expect(
       (
         await fetch(`${apiUrl}/api/v1/device/config/ack`, {
@@ -260,6 +262,79 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     expect(pageErrors).toEqual([]);
     await page.close();
   }, 90000);
+  it('updates physical-device warning and critical cards and the global alarm banner in realtime', async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    try {
+      await page.goto(origin);
+      await page.getByLabel('Email', { exact: true }).fill('browser@test.local');
+      await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
+      await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+      await page.getByRole('heading', { name: 'Tổng quan hệ thống' }).waitFor();
+      const headers = { 'X-Requested-With': 'AirGuard' };
+      const created = await page.request.post(`${origin}/api/v1/devices`, {
+        headers,
+        data: { name: 'ESP32 alerts', source_kind: 'physical' },
+      });
+      expect(created.status()).toBe(201);
+      const deviceId = (await created.json()).data.id as string;
+      const credential = await page.request.post(
+        `${origin}/api/v1/devices/${deviceId}/credentials`,
+        { headers },
+      );
+      expect(credential.status()).toBe(201);
+      const key = (await credential.json()).data.key as string;
+      const boot = randomUUID();
+      const upload = async (seq: number, level: 'warning' | 'critical' | 'normal') => {
+        const input = buildPayload({
+          deviceId,
+          bootId: boot,
+          bootCounter: '1',
+          seq: String(seq),
+          uptime: seq * 5000,
+          now: new Date(),
+        });
+        input.readings[0]!.alert_snapshot.gas = level;
+        input.readings[0]!.alert_snapshot.co = 'normal';
+        input.readings[0]!.alert_snapshot.buzzer_commanded_on = level !== 'normal';
+        input.readings[0]!.sensors.mq2.adc_raw =
+          level === 'critical' ? 3800 : level === 'warning' ? 3300 : 2800;
+        input.readings[0]!.sensors.mq7.adc_raw = 600;
+        const response = await page.request.post(`${origin}/api/v1/device/telemetry`, {
+          headers: { Authorization: `DeviceKey ${key}` },
+          data: input,
+        });
+        expect(response.status()).toBe(200);
+      };
+      await upload(1, 'warning');
+      await page.reload();
+      await page.getByLabel('Thiết bị đang xem').selectOption(deviceId);
+      await expect
+        .poll(() => page.getByLabel('MQ-2', { exact: true }).getAttribute('class'))
+        .toContain('sensor-warning');
+      await upload(2, 'critical');
+      await expect
+        .poll(() => page.getByLabel('MQ-2', { exact: true }).getAttribute('class'))
+        .toContain('sensor-critical');
+      await page.getByRole('alert').filter({ hasText: 'Critical' }).waitFor();
+      const incident = await db.alertIncident.findFirstOrThrow({
+        where: { deviceId, condition: 'gas' },
+      });
+      expect(incident.severity).toBe('critical');
+      expect(
+        await db.alertEvent.count({ where: { incidentId: incident.id, transition: 'escalated' } }),
+      ).toBe(1);
+      await upload(3, 'normal');
+      await expect
+        .poll(() => page.getByLabel('MQ-2', { exact: true }).getAttribute('class'))
+        .toContain('sensor-normal');
+      expect(
+        (await db.alertIncident.findUniqueOrThrow({ where: { id: incident.id } })).status,
+      ).toBe('ended');
+    } finally {
+      await page.close();
+    }
+  }, 60000);
+
   it('admin creates and locks users while self-service password change revokes browser sessions', async () => {
     const adminPage = await browser.newPage();
     await adminPage.goto(origin);

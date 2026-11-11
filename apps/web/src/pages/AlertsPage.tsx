@@ -31,10 +31,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
   return (
     <>
       <PageTitle eyebrow="INCIDENT MANAGEMENT" title="Cảnh báo & sự cố">
-        <p>
-          Lịch sử có bắt đầu/kết thúc và xác nhận độc lập. Mất Internet hoặc acknowledge không đóng
-          sự cố.
-        </p>
+        <p>Theo dõi và xác nhận cảnh báo từ thiết bị.</p>
       </PageTitle>
       <form className="panel filter-grid" onSubmit={submit}>
         <label>
@@ -54,7 +51,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
             <option value="">Tất cả</option>
             <option value="gas">Gas</option>
             <option value="co">CO</option>
-            <option value="flame">Flame</option>
+            <option value="flame">Lửa</option>
           </select>
         </label>
         <label>
@@ -124,11 +121,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
                   <td>{i.status === 'active' ? 'Chưa kết thúc' : 'Đã kết thúc'}</td>
                   <td>
                     {dateText(i.started_at ?? i.first_observed_at)}
-                    {!i.started_at ? (
-                      <small className="device-id">
-                        Thời điểm server quan sát, chưa biết lúc bắt đầu
-                      </small>
-                    ) : null}
+                    {!i.started_at ? <small className="device-id">Thời điểm ghi nhận</small> : null}
                   </td>
                   <td>{i.acknowledgement ? 'Đã xác nhận' : 'Chưa xác nhận'}</td>
                   <td>
@@ -150,10 +143,6 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
           Tải thêm sự cố
         </button>
       ) : null}
-      <p className="caption">
-        Nguồn snapshot chỉ phát hiện các chuyển trạng thái đã quan sát. Event có ID ổn định giúp
-        khôi phục sự cố ngắn xảy ra khi offline. Không diễn giải mức độ thành nồng độ khí.
-      </p>
     </>
   );
 }

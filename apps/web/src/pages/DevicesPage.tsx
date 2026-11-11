@@ -45,10 +45,7 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
   return (
     <>
       <PageTitle eyebrow="DEVICE MANAGEMENT" title="Thiết bị">
-        <p>
-          Metadata, credentials, cấu hình có version và lịch sử kết nối. Source chỉ định lúc đăng
-          ký, không đổi nhãn dữ liệu cũ.
-        </p>
+        <p>Quản lý thiết bị, vị trí lắp đặt và kết nối.</p>
       </PageTitle>
       {user.role === 'admin' ? (
         <form className="panel inline-form" onSubmit={submit}>
@@ -59,8 +56,8 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
           <label>
             Nguồn dữ liệu
             <select name="source_kind">
-              <option value="simulator">Simulator — dữ liệu mô phỏng</option>
               <option value="physical">Thiết bị thật</option>
+              <option value="simulator">Dữ liệu mô phỏng</option>
             </select>
           </label>
           <button className="primary" disabled={create.isPending}>
@@ -91,7 +88,7 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
               <th>Nguồn</th>
               <th>Kết nối</th>
               <th>Liên lạc cuối</th>
-              <th>Credential</th>
+              <th>Khóa kết nối</th>
             </tr>
           </thead>
           <tbody>
@@ -136,7 +133,7 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
           <div className="empty">
             <Cpu size={30} />
             <h3>Chưa có thiết bị</h3>
-            <p>Thêm simulator để kiểm thử trước firmware.</p>
+            <p>Thêm thiết bị và cấp khóa kết nối.</p>
           </div>
         ) : null}
       </div>

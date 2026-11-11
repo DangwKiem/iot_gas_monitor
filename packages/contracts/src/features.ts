@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { alertPolicySchema } from './alert-policy.js';
 
 export const conditionSchema = z.enum(['gas', 'co', 'flame']);
 export const severitySchema = z.enum(['warning', 'critical']);
@@ -40,6 +41,7 @@ export const rotationSchema = credentialSchema.extend({
 });
 export const deviceConfigSchema = z.strictObject({
   reporting_interval_ms: z.number().int().min(1000).max(60000),
+  alert_policy: alertPolicySchema.optional(),
 });
 export const updateConfigSchema = z.strictObject({
   expected_version: z.number().int().min(1),

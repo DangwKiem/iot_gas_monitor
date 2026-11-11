@@ -6,7 +6,14 @@ export const counterSchema = z
   .refine((value) => BigInt(value) <= 9223372036854775807n, 'Counter exceeds PostgreSQL BIGINT');
 const age = z.number().int().min(0).max(86_400_000);
 export const qualitySchema = z.enum(['valid', 'invalid', 'warming_up', 'uncalibrated', 'heating']);
-export const alertStateSchema = z.enum(['normal', 'active', 'unknown', 'not_configured']);
+export const alertStateSchema = z.enum([
+  'normal',
+  'active',
+  'warning',
+  'critical',
+  'unknown',
+  'not_configured',
+]);
 export const alertSnapshotSchema = z.strictObject({
   gas: alertStateSchema,
   co: alertStateSchema,
@@ -123,5 +130,6 @@ export type DeviceView = {
 };
 
 export * from './features.js';
+export * from './alert-policy.js';
 export * from './users.js';
 export * from './push.js';

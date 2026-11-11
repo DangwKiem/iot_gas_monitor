@@ -1,4 +1,22 @@
-# Trạng thái kiểm thử — phần mềm local v0.5
+# Trạng thái kiểm thử — phần mềm v0.6
+
+## Cảnh báo theo ngưỡng — 11/11/2026
+
+- `npm test` đạt 52 bài, bỏ qua 82 bài cần runner database/browser riêng. `npm run test:integration` đạt 94 bài với PostgreSQL biệt lập. Chromium E2E đạt 5 bài, bỏ qua 1 bài native Notification theo giới hạn headless đã ghi bên dưới.
+- Build, TypeScript, ESLint và format check đạt. Firmware 0.3.0 build được với cả ngõ Flame AO và D0 bằng ESP32 Arduino 3.3.11.
+- Kiểm thử C++ chạy trong container Linux đạt các biên Warning/Critical, hysteresis, chiều tín hiệu Flame, retry/ACK, cấu hình canonical, từ chối ngưỡng sai và lỗi cấp phát bộ nhớ. Payload/cấu hình do C++ tạo được kiểm tra trực tiếp bằng schemas TypeScript.
+- API/DB kiểm tra nâng cùng sự cố Warning → Critical, lịch sử escalated, dedup thông báo từng mức, hạ mức hiện tại, giữ sự cố khi cảm biến lỗi, kết thúc bằng mẫu hợp lệ và bỏ qua trạng thái cũ. Client chỉ đổi chu kỳ vẫn giữ ngưỡng đã lưu.
+- Browser kiểm tra thẻ màu Warning/Critical, banner toàn cục, cập nhật realtime, lưu ngưỡng, ACK cấu hình, đăng xuất và các luồng quản trị cũ. Giao diện đã bỏ ghi chú nghiên cứu và giải thích kỹ thuật thừa.
+- Migration `202611110001_alert_escalation` đã áp dụng vào database local, giữ dữ liệu hiện có.
+- Chưa nạp firmware 0.3.0 lên board thật hoặc kiểm tra giao thông báo qua provider thật. Log của người dùng cho thấy Flame AO đang ADC_CLIPPED, cần xử lý điện áp/ngõ vào. Ngưỡng mặc định là ADC, chưa phải giới hạn nồng độ được hiệu chuẩn. MQ-7 heater vẫn unverified.
+
+## Firmware ESP32 Wi-Fi — 11/11/2026
+
+- Firmware `esp32-0.2.0` có worker Wi-Fi/API riêng với vòng đọc cảm biến, queue RAM giới hạn, retry giữ nguyên reading, boot counter NVS, kiểm tra ACK và tải/hash/ACK cấu hình chu kỳ gửi.
+- Đã build cấu hình mặc định và cấu hình có Wi-Fi/Device ID/key giả bằng Arduino CLI 1.5.1, ESP32 Arduino 3.3.11 và DHT 1.4.7. Bản có mạng liên kết đầy đủ dùng 1.061.296 byte flash và 48.784 byte biến toàn cục. Cấu hình kiểm thử nằm trong thư mục tạm, không ghi đè cấu hình của người dùng.
+- Kiểm thử API/DB/Socket.IO với PostgreSQL container biệt lập đã đạt. Payload theo định dạng firmware dùng thiết bị physical, time_quality unsynced, sequence lớn hơn 2^53. Kiểm tra cấp key, hash/ACK config, lưu reading, retry không nhân row, REST latest, realtime invalidation và invalid/null sensors. Payload ở bài này được tạo từ fixture API, chưa lấy từ ESP32 thật.
+- Chương trình kiểm thử encoder C++ trên máy tính biên dịch được nhưng Windows Application Control chặn thực thi. Không tính kiểm thử runtime encoder và fault injection đó là pass.
+- Chưa nạp bản Wi-Fi lên ESP32, thử Wi-Fi/HTTP/HTTPS từ board thật, mất mạng/reboot/queue overflow hoặc đo ảnh hưởng tác vụ mạng lên vòng cảm biến/còi. Xem [hướng dẫn kết nối](../../firmware/README.md#kết-nối-esp32-với-web-local) để cấu hình SSID, key và API LAN.
 
 ## Web Push — lần kiểm tra bổ sung
 
@@ -77,7 +95,7 @@ Các kiểm thử được viết và quan sát fail trước phần implementat
 - Chưa đo RPO/RTO bằng lịch backup thực tế, backup offsite hoặc deployment smoke ngoài LAN. Drill backup/restore local đã chạy; không suy thành SLA vận hành.
 - Đã thử chặn vượt 100.000 CSV rows, chưa đo throughput/memory xuất đúng 100.000 dòng hoặc range 90 ngày đầy tải; sự cố dài hạn qua nhiều boot chưa được soak.
 - Workflow CI đã có nhưng chưa push/chạy trên GitHub. Scheduler OS, backup rotation và phân trang config trên 100 phiên bản gần nhất chưa tự triển khai.
-- Chưa có firmware, wiring, heater, calibration, sensor integration, cảnh báo cục bộ hoặc hardware-in-the-loop.
+- Có firmware bench và Wi-Fi, nhưng wiring, heater, calibration, sensor integration, cảnh báo cục bộ và hardware-in-the-loop chưa được nghiệm thu trên phần cứng thật.
 - Chưa triển khai hoặc kiểm thử cloud. Không suy diễn availability/SLA từ test local.
 
 ## Regression: Origin local và phiên đăng nhập sau refresh

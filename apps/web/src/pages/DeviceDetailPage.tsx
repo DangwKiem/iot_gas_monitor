@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ConfigView, CredentialView, DeviceView, StatusView, UserView } from '@iot/contracts';
+import { defaultAlertPolicy, deviceConfigSchema, type AlertPolicy } from '@iot/contracts';
 import { api, apiPage } from '../lib/api.js';
 import { PageTitle, LoadState, dateText } from '../components/FeatureUI.js';
 import { IssuedKey, type IssuedCredential } from '../components/IssuedKey.js';
@@ -279,6 +280,7 @@ function Credentials({ device }: { device: DeviceView }) {
 }
 
 function Configuration({ device, admin }: { device: DeviceView; admin: boolean }) {
+  const [validationError, setValidationError] = useState<Error | null>(null);
   const client = useQueryClient();
   const config = useQuery({
     queryKey: ['config', device.id],
@@ -286,12 +288,12 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
     refetchInterval: 10000,
   });
   const update = useMutation({
-    mutationFn: (interval: number) =>
+    mutationFn: (input: { reporting_interval_ms: number; alert_policy?: AlertPolicy }) =>
       api(`/devices/${device.id}/config`, {
         method: 'PUT',
         body: JSON.stringify({
           expected_version: config.data!.desired.version,
-          config: { reporting_interval_ms: interval * 1000 },
+          config: input,
         }),
       }),
     onSuccess: async () => {
@@ -303,15 +305,40 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
   });
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    update.mutate(Number(new FormData(e.currentTarget).get('interval')));
+    const form = new FormData(e.currentTarget);
+    const gas = (name: string) => ({
+      warning_on: Number(form.get(name + '_warning_on')),
+      warning_off: Number(form.get(name + '_warning_off')),
+      critical_on: Number(form.get(name + '_critical_on')),
+      critical_off: Number(form.get(name + '_critical_off')),
+    });
+    const parsed = deviceConfigSchema.safeParse({
+      reporting_interval_ms: Number(form.get('interval')) * 1000,
+      alert_policy: {
+        gas: gas('gas'),
+        co: gas('co'),
+        flame: {
+          alarm_on: Number(form.get('flame_on')),
+          alarm_off: Number(form.get('flame_off')),
+          active_below: form.get('flame_below') === 'true',
+        },
+      },
+    });
+    if (!parsed.success) {
+      setValidationError(new Error(parsed.error.issues.map((i) => i.message).join('. ')));
+      return;
+    }
+    setValidationError(null);
+    update.mutate(parsed.data);
   }
   const data = config.data;
+  const policy = data?.desired.config.alert_policy ?? defaultAlertPolicy;
   return (
     <section className="panel feature-section">
       <h2>Cấu hình thiết bị</h2>
       <LoadState
         pending={config.isPending}
-        error={config.error ?? update.error}
+        error={config.error ?? update.error ?? validationError}
         retry={() => void config.refetch()}
       />
       {data ? (
@@ -324,12 +351,9 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
             </span>
           </div>
           {data.applied_version !== data.desired.version ? (
-            <p className="notice">
-              Đang chờ thiết bị tải và xác nhận cấu hình. Lưu trên web không có nghĩa firmware đã áp
-              dụng.
-            </p>
+            <p className="notice">Đang chờ thiết bị áp dụng cấu hình mới.</p>
           ) : null}
-          <form onSubmit={submit} className="inline-form" key={data.desired.version}>
+          <form onSubmit={submit} className="stack-form" key={data.desired.version}>
             <label>
               Chu kỳ gửi (giây)
               <input
@@ -343,17 +367,74 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
                 disabled={!admin || !!device.archived_at}
               />
             </label>
+            {(['gas', 'co'] as const).map((condition) => (
+              <fieldset
+                className="alert-policy-fields"
+                key={condition}
+                disabled={!admin || !!device.archived_at}
+              >
+                <legend>{condition === 'gas' ? 'Khí gas · MQ-2' : 'CO · MQ-7'} · ADC</legend>
+                {(
+                  [
+                    ['warning_on', 'Kích hoạt Warning'],
+                    ['warning_off', 'Nhả Warning'],
+                    ['critical_on', 'Kích hoạt Critical'],
+                    ['critical_off', 'Nhả Critical'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key}>
+                    {label}
+                    <input
+                      name={condition + '_' + key}
+                      type="number"
+                      min={0}
+                      max={4094}
+                      step={1}
+                      required
+                      defaultValue={policy[condition][key]}
+                    />
+                  </label>
+                ))}
+              </fieldset>
+            ))}
+            <fieldset className="alert-policy-fields" disabled={!admin || !!device.archived_at}>
+              <legend>Cảm biến lửa · AO · Critical</legend>
+              <label>
+                Kích hoạt (ADC)
+                <input
+                  name="flame_on"
+                  type="number"
+                  min={0}
+                  max={4094}
+                  required
+                  defaultValue={policy.flame.alarm_on}
+                />
+              </label>
+              <label>
+                Nhả (ADC)
+                <input
+                  name="flame_off"
+                  type="number"
+                  min={0}
+                  max={4094}
+                  required
+                  defaultValue={policy.flame.alarm_off}
+                />
+              </label>
+              <label>
+                Chiều tín hiệu
+                <select name="flame_below" defaultValue={String(policy.flame.active_below)}>
+                  <option value="true">Giảm khi phát hiện lửa</option>
+                  <option value="false">Tăng khi phát hiện lửa</option>
+                </select>
+              </label>
+            </fieldset>
             {admin ? (
               <button className="primary" disabled={update.isPending || !!device.archived_at}>
                 Lưu cấu hình
               </button>
             ) : null}
           </form>
-          <p className="caption">
-            Chỉ cấu hình chu kỳ truyền 1–60 giây. Không cung cấp lệnh tắt còi, đổi heater hoặc tự
-            đặt ngưỡng nguy hiểm gas/CO. Mỗi lần lưu tạo version bất biến; thay đổi đồng thời bị
-            phát hiện bằng expected_version.
-          </p>
           <h3>Lịch sử phiên bản</h3>
           <div className="table-wrap">
             <table>
@@ -391,7 +472,7 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
               ))}
             </ul>
           ) : (
-            <p className="muted">Chưa có ACK từ thiết bị.</p>
+            <p className="muted">Chưa nhận xác nhận từ thiết bị.</p>
           )}
         </>
       ) : null}
@@ -426,7 +507,7 @@ export default function DeviceDetailPage({ user }: { user: UserView }) {
       {device.data ? (
         <>
           <PageTitle eyebrow="DEVICE DETAIL" title={device.data.name}>
-            <p>Metadata, credentials, cấu hình và kết nối.</p>
+            <p>Thông tin, ngưỡng cảnh báo và lịch sử kết nối.</p>
           </PageTitle>
           <Metadata device={device.data} admin={user.role === 'admin'} />
           {user.role === 'admin' ? <Credentials device={device.data} /> : null}

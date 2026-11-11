@@ -25,23 +25,20 @@ export default function LoginPage({ onLogin }: { onLogin: (session: SessionView)
           </span>{' '}
           AirGuard<span className="brand-sub">MONITOR</span>
         </div>
-        <span className="eyebrow">IOT OBSERVABILITY PLATFORM</span>
+        <span className="eyebrow">GIÁM SÁT VÀ CẢNH BÁO KHÍ GAS</span>
         <h1>
           Dữ liệu rõ ràng.
           <br />
           <span>Giám sát chủ động.</span>
         </h1>
-        <p>Theo dõi thiết bị và tín hiệu cảm biến trên một không gian làm việc thống nhất.</p>
+        <p>Theo dõi khí gas, CO và tín hiệu lửa từ các thiết bị của bạn.</p>
         <div className="login-feature">
           <Radio size={20} />
-          <span>Telemetry thời gian thực</span>
+          <span>Cảnh báo thời gian thực</span>
         </div>
         <div className="login-feature">
           <ShieldCheck size={20} />
           <span>Truy cập được phân quyền</span>
-        </div>
-        <div className="research-note">
-          Dự án nghiên cứu và học tập. Không thay thế thiết bị cảnh báo an toàn đạt chứng nhận.
         </div>
       </section>
       <section className="login-form-area">
@@ -78,9 +75,7 @@ export default function LoginPage({ onLogin }: { onLogin: (session: SessionView)
           <button className="primary full" disabled={login.isPending}>
             {login.isPending ? 'Đang xác thực…' : 'Đăng nhập'}
           </button>
-          <p className="caption">
-            Giữ đăng nhập tối đa 8 giờ bằng cookie bảo mật. Refresh trang không cần đăng nhập lại.
-          </p>
+          <p className="caption">Phiên đăng nhập có hiệu lực trong 8 giờ.</p>
         </form>
       </section>
     </main>
