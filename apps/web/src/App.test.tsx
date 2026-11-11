@@ -95,7 +95,9 @@ it('shows a recoverable session-check error instead of pretending a network fail
     throw new Error('API không phản hồi');
   });
   mount();
-  expect(await screen.findByRole('alert')).toHaveTextContent('API không phản hồi');
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Không thể kết nối. Vui lòng thử lại.',
+  );
   expect(screen.getByRole('button', { name: 'Thử lại' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Đăng nhập' })).not.toBeInTheDocument();
 });

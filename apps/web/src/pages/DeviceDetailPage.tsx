@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import type { ConfigView, CredentialView, DeviceView, StatusView, UserView } from '@iot/contracts';
 import { defaultAlertPolicy, deviceConfigSchema, type AlertPolicy } from '@iot/contracts';
 import { api, apiPage } from '../lib/api.js';
-import { PageTitle, LoadState, dateText } from '../components/FeatureUI.js';
+import { PageTitle, LoadState, dateText, connectionText } from '../components/FeatureUI.js';
 import { IssuedKey, type IssuedCredential } from '../components/IssuedKey.js';
 
 function Metadata({ device, admin }: { device: DeviceView; admin: boolean }) {
@@ -60,24 +60,22 @@ function Metadata({ device, admin }: { device: DeviceView; admin: boolean }) {
         </label>
         <dl className="detail-grid">
           <div>
-            <dt>Device ID</dt>
+            <dt>Mã thiết bị</dt>
             <dd>
               <code>{device.id}</code>
             </dd>
           </div>
           <div>
             <dt>Nguồn</dt>
-            <dd>
-              {device.source_kind === 'simulator' ? 'Simulator — dữ liệu mô phỏng' : 'Phần cứng'}
-            </dd>
+            <dd>{device.source_kind === 'simulator' ? 'Mô phỏng' : 'Thiết bị thật'}</dd>
           </div>
           <div>
             <dt>Liên lạc cuối</dt>
             <dd>{dateText(device.last_seen_at)}</dd>
           </div>
           <div>
-            <dt>Firmware gần nhất</dt>
-            <dd>{device.latest?.payload.firmware_version ?? 'Chưa có telemetry'}</dd>
+            <dt>Phiên bản thiết bị</dt>
+            <dd>{device.latest?.payload.firmware_version ?? 'Chưa có dữ liệu'}</dd>
           </div>
         </dl>
         {admin ? (
@@ -101,10 +99,11 @@ function Metadata({ device, admin }: { device: DeviceView; admin: boolean }) {
           Thiết bị đã lưu trữ
         </p>
       ) : null}
-      <p className="caption">
-        Lưu trữ giữ nguyên dữ liệu, sự cố và keys nhưng chặn liên lạc của thiết bị. Khôi phục cho
-        phép các key chưa hết hạn/thu hồi hoạt động lại; không tắt cơ chế cảnh báo cục bộ.
-      </p>
+      {admin ? (
+        <p className="caption">
+          Lưu trữ sẽ ngừng nhận dữ liệu; lịch sử vẫn được giữ. Cảnh báo tại thiết bị vẫn hoạt động.
+        </p>
+      ) : null}
       <LoadState error={edit.error} />
       {edit.isSuccess ? (
         <p role="status" className="caption">
@@ -168,27 +167,27 @@ function Credentials({ device }: { device: DeviceView }) {
   }
   return (
     <section className="panel feature-section">
-      <h2>Quản lý key</h2>
+      <h2>Khóa kết nối</h2>
       <p className="caption">
-        Key mới chỉ hiển thị một lần. Rotation tạo key mới và rút hạn key cũ về cửa sổ chuyển tiếp;
-        không tự gửi secret xuống thiết bị. Thu hồi có hiệu lực ngay.
+        Khi đổi khóa, hãy cập nhật khóa mới trên thiết bị trước khi khóa cũ hết hạn. Thu hồi có hiệu
+        lực ngay.
       </p>
       {issued ? <IssuedKey issued={issued} close={() => setIssued(null)} /> : null}
       <form className="inline-form" onSubmit={submit}>
         <label>
-          Nhãn key
+          Tên khóa
           <input name="label" maxLength={80} placeholder="Ví dụ: ESP32 phòng 301" />
         </label>
         <label>
-          Hạn key mới (không bắt buộc)
+          Hết hạn (tùy chọn)
           <input name="expires_at" type="datetime-local" />
         </label>
         <button className="primary" disabled={issue.isPending || !!issued || !!device.archived_at}>
-          Cấp key mới
+          Cấp khóa mới
         </button>
       </form>
       <label className="compact-field">
-        Thời gian chuyển key (phút)
+        Thời gian chuyển khóa (phút)
         <input
           type="number"
           min={1}
@@ -206,7 +205,7 @@ function Credentials({ device }: { device: DeviceView }) {
         <table>
           <thead>
             <tr>
-              <th>Key ID / nhãn</th>
+              <th>Khóa</th>
               <th>Trạng thái</th>
               <th>Tạo / hết hạn</th>
               <th>Dùng lần cuối</th>
@@ -219,13 +218,16 @@ function Credentials({ device }: { device: DeviceView }) {
               .map((k) => (
                 <tr key={k.key_id}>
                   <td>
-                    <code>{k.key_id}</code>
-                    <small className="device-id">
-                      {k.label || 'Không có nhãn'}
-                      {k.replaces_key_id ? ` · Thay ${k.replaces_key_id}` : ''}
-                    </small>
+                    <strong>{k.label || 'Không có tên'}</strong>
+                    <small className="device-id">{k.key_id}</small>
                   </td>
-                  <td>{k.status}</td>
+                  <td>
+                    {k.status === 'active'
+                      ? 'Hoạt động'
+                      : k.status === 'revoked'
+                        ? 'Đã thu hồi'
+                        : 'Hết hạn'}
+                  </td>
                   <td>
                     {dateText(k.created_at)}
                     <small className="device-id">
@@ -247,7 +249,7 @@ function Credentials({ device }: { device: DeviceView }) {
                           }
                           onClick={() => issue.mutate({ keyId: k.key_id, label: k.label })}
                         >
-                          Đổi key
+                          Đổi khóa
                         </button>
                       ) : null}
                       {k.status !== 'revoked' ? (
@@ -272,7 +274,7 @@ function Credentials({ device }: { device: DeviceView }) {
           disabled={keys.isFetchingNextPage}
           onClick={() => void keys.fetchNextPage()}
         >
-          Tải thêm keys
+          Tải thêm khóa
         </button>
       ) : null}
     </section>
@@ -343,16 +345,14 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
       />
       {data ? (
         <>
-          <div className="button-row">
-            <span className="badge">Mong muốn: v{data.desired.version}</span>
-            <span className="badge">
-              Đã áp dụng:{' '}
-              {data.applied_version === null ? 'chưa xác nhận' : `v${data.applied_version}`}
-            </span>
-          </div>
-          {data.applied_version !== data.desired.version ? (
-            <p className="notice">Đang chờ thiết bị áp dụng cấu hình mới.</p>
-          ) : null}
+          <p
+            className={`badge ${data.applied_version === data.desired.version ? 'success' : ''}`}
+            role="status"
+          >
+            {data.applied_version === data.desired.version
+              ? 'Thiết bị đã áp dụng cấu hình'
+              : 'Đang chờ thiết bị cập nhật'}
+          </p>
           <form onSubmit={submit} className="stack-form" key={data.desired.version}>
             <label>
               Chu kỳ gửi (giây)
@@ -377,9 +377,9 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
                 {(
                   [
                     ['warning_on', 'Kích hoạt Warning'],
-                    ['warning_off', 'Nhả Warning'],
+                    ['warning_off', 'Tắt Warning'],
                     ['critical_on', 'Kích hoạt Critical'],
-                    ['critical_off', 'Nhả Critical'],
+                    ['critical_off', 'Tắt Critical'],
                   ] as const
                 ).map(([key, label]) => (
                   <label key={key}>
@@ -411,7 +411,7 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
                 />
               </label>
               <label>
-                Nhả (ADC)
+                Tắt (ADC)
                 <input
                   name="flame_off"
                   type="number"
@@ -435,45 +435,50 @@ function Configuration({ device, admin }: { device: DeviceView; admin: boolean }
               </button>
             ) : null}
           </form>
-          <h3>Lịch sử phiên bản</h3>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Version</th>
-                  <th>Chu kỳ (ms)</th>
-                  <th>Tạo lúc</th>
-                  <th>Người tạo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.history.map((c) => (
-                  <tr key={c.version}>
-                    <td>v{c.version}</td>
-                    <td>{c.config.reporting_interval_ms}</td>
-                    <td>{dateText(c.created_at)}</td>
-                    <td>{c.author ?? 'Khởi tạo hệ thống'}</td>
+          <details className="disclosure">
+            <summary>Lịch sử cấu hình</summary>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Phiên bản</th>
+                    <th>Chu kỳ (giây)</th>
+                    <th>Tạo lúc</th>
+                    <th>Người tạo</th>
                   </tr>
+                </thead>
+                <tbody>
+                  {data.history.map((c) => (
+                    <tr key={c.version}>
+                      <td>v{c.version}</td>
+                      <td>{c.config.reporting_interval_ms / 1000}</td>
+                      <td>{dateText(c.created_at)}</td>
+                      <td>{c.author ?? 'Khởi tạo hệ thống'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+          <details className="disclosure">
+            <summary>Lịch sử cập nhật thiết bị</summary>
+            {data.acknowledgements.length ? (
+              <ul className="timeline">
+                {data.acknowledgements.map((ack) => (
+                  <li key={`${ack.version}:${ack.status}`}>
+                    <strong>
+                      v{ack.version} ·{' '}
+                      {ack.status === 'applied' ? 'Đã áp dụng' : 'Không thể áp dụng'}
+                    </strong>
+                    {ack.reason ? <p>{ack.reason}</p> : null}
+                    <small>{dateText(ack.received_at)}</small>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </div>
-          <h3>Xác nhận từ thiết bị</h3>
-          {data.acknowledgements.length ? (
-            <ul className="timeline">
-              {data.acknowledgements.map((ack) => (
-                <li key={`${ack.version}:${ack.status}`}>
-                  <strong>
-                    v{ack.version} · {ack.status}
-                  </strong>
-                  <p>{ack.reason || 'Không có ghi chú'}</p>
-                  <small>{dateText(ack.received_at)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">Chưa nhận xác nhận từ thiết bị.</p>
-          )}
+              </ul>
+            ) : (
+              <p className="muted">Chưa có lịch sử cập nhật.</p>
+            )}
+          </details>
         </>
       ) : null}
     </section>
@@ -506,9 +511,7 @@ export default function DeviceDetailPage({ user }: { user: UserView }) {
       />
       {device.data ? (
         <>
-          <PageTitle eyebrow="DEVICE DETAIL" title={device.data.name}>
-            <p>Thông tin, ngưỡng cảnh báo và lịch sử kết nối.</p>
-          </PageTitle>
+          <PageTitle title={device.data.name} />
           <Metadata device={device.data} admin={user.role === 'admin'} />
           {user.role === 'admin' ? <Credentials device={device.data} /> : null}
           <Configuration device={device.data} admin={user.role === 'admin'} />
@@ -524,8 +527,8 @@ export default function DeviceDetailPage({ user }: { user: UserView }) {
                 <thead>
                   <tr>
                     <th>Chuyển trạng thái</th>
-                    <th>Hiệu lực</th>
-                    <th>Server phát hiện</th>
+                    <th>Thời điểm thay đổi</th>
+                    <th>Thời điểm ghi nhận</th>
                     <th>Lý do</th>
                   </tr>
                 </thead>
@@ -535,11 +538,18 @@ export default function DeviceDetailPage({ user }: { user: UserView }) {
                     .map((s) => (
                       <tr key={s.id}>
                         <td>
-                          {s.previous_status} → {s.new_status}
+                          {s.previous_status ? connectionText[s.previous_status] : '—'} →{' '}
+                          {connectionText[s.new_status]}
                         </td>
                         <td>{dateText(s.effective_at)}</td>
                         <td>{dateText(s.detected_at)}</td>
-                        <td>{s.reason}</td>
+                        <td>
+                          {{
+                            authenticated_contact: 'Thiết bị kết nối',
+                            heartbeat_timeout: 'Mất tín hiệu',
+                            device_archived: 'Lưu trữ thiết bị',
+                          }[s.reason] ?? 'Thay đổi kết nối'}
+                        </td>
                       </tr>
                     ))}
                 </tbody>

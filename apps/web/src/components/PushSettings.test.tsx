@@ -104,7 +104,7 @@ function setup(enabled = true) {
 }
 it('asks permission only after an explicit click and supports enabling/disabling the current browser', async () => {
   const state = setup();
-  const enable = await screen.findByRole('button', { name: 'Bật Web Push' });
+  const enable = await screen.findByRole('button', { name: 'Bật thông báo' });
   expect(state.prompted()).toBe(0);
   fireEvent.click(enable);
   await waitFor(() => expect(state.serverSubscribed()).toBe(true));
@@ -112,13 +112,13 @@ it('asks permission only after an explicit click and supports enabling/disabling
     await screen.findByText('Đang nhận thông báo trên trình duyệt này', { exact: true }),
   ).toBeInTheDocument();
   expect(state.prompted()).toBe(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Tắt Web Push' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Tắt thông báo' }));
   await waitFor(() => expect(state.serverSubscribed()).toBe(false));
   expect(state.browserSubscribed()).toBe(false);
 });
 it('explains server-disabled configuration without requesting notification permission', async () => {
   const state = setup(false);
-  expect(await screen.findByText(/Backend chưa bật Web Push/)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Bật Web Push' })).not.toBeInTheDocument();
+  expect(await screen.findByText(/Thông báo trình duyệt hiện chưa khả dụng/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Bật thông báo' })).not.toBeInTheDocument();
   expect(state.prompted()).toBe(0);
 });

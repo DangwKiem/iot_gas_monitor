@@ -8,7 +8,7 @@ import {
   enableBrowserPush,
   disableBrowserPush,
 } from '../lib/web-push.js';
-import { LoadState, dateText } from './FeatureUI.js';
+import { LoadState } from './FeatureUI.js';
 
 export function PushSettings() {
   const [choice, setChoice] = useState<boolean | undefined>();
@@ -41,40 +41,29 @@ export function PushSettings() {
     settings.data.server.vapid_public_key === settings.data.config.public_key &&
     settings.data.local.publicKey === settings.data.config.public_key;
   return (
-    <section className="panel feature-section" aria-label="Web Push">
-      <h2>Thông báo Web Push</h2>
-      <p>
-        Cảnh báo warning/critical trên trình duyệt đã đăng ký; có thể nhận khi đóng tab nếu trình
-        duyệt/hệ điều hành hỗ trợ. Không thay thế còi cục bộ.
-      </p>
+    <section className="panel feature-section" aria-label="Thông báo trình duyệt">
+      <h2>Thông báo trình duyệt</h2>
       <LoadState
         pending={settings.isPending}
         error={settings.error ?? enable.error ?? disable.error}
         retry={() => void settings.refetch()}
       />
-      {!supported ? (
+      {settings.data?.config.enabled && !supported ? (
         <p className="notice">
-          Trình duyệt hoặc ngữ cảnh này chưa hỗ trợ Web Push. Dùng HTTPS hoặc localhost trên trình
-          duyệt hỗ trợ; HTTP qua IP LAN không đủ.
+          Không thể bật thông báo tại đây. Hãy dùng trình duyệt hỗ trợ và kết nối bảo mật.
         </p>
       ) : null}
       {settings.data && !settings.data.config.enabled ? (
-        <p className="notice">
-          Backend chưa bật Web Push. Quản trị viên cần cấu hình VAPID trong .env và khởi động lại
-          API.
-        </p>
+        <p className="notice">Thông báo trình duyệt hiện chưa khả dụng.</p>
       ) : null}
       {settings.data?.config.enabled && supported ? (
         <>
           <p role="status">
-            {active
-              ? 'Đang nhận thông báo trên trình duyệt này'
-              : 'Chưa đăng ký nhận thông báo cho phiên này'}
+            {active ? 'Đang nhận thông báo trên trình duyệt này' : 'Thông báo đang tắt'}
           </p>
           {Notification.permission === 'denied' ? (
             <p className="notice">
-              Quyền thông báo đang bị chặn. Mở quyền của website trong trình duyệt, cho phép rồi tải
-              lại trang; ứng dụng không thể tự bỏ chặn.
+              Thông báo bị chặn. Cho phép thông báo trong cài đặt trình duyệt rồi thử lại.
             </p>
           ) : null}
           <label className="check-label">
@@ -93,30 +82,18 @@ export function PushSettings() {
               }
               onClick={() => enable.mutate()}
             >
-              {active ? 'Lưu tùy chọn Web Push' : 'Bật Web Push'}
+              {active ? 'Lưu tùy chọn' : 'Bật thông báo'}
             </button>
             <button
               disabled={enable.isPending || disable.isPending}
               onClick={() => disable.mutate()}
             >
-              Tắt Web Push
+              Tắt thông báo
             </button>
             <button onClick={() => void settings.refetch()}>Kiểm tra lại</button>
           </div>
-          {active ? (
-            <p className="caption">
-              Hiệu lực tới khi phiên hết hạn: {dateText(settings.data.server?.expires_at)}. Đăng
-              xuất hoặc thu hồi phiên sẽ hủy đăng ký; đăng nhập lại cần bật lại.
-            </p>
-          ) : null}
         </>
       ) : null}
-      <p className="caption">
-        Chỉ xin quyền sau khi bạn bấm bật. Thông báo màn hình khóa không chứa tên/vị trí thiết bị
-        hay số đo; bấm để mở chi tiết, ứng dụng vẫn kiểm tra đăng nhập. Đổi khóa VAPID cần đăng ký
-        lại. Hệ điều hành có thể chặn/hoãn thông báo; đóng hoàn toàn trình duyệt không bảo đảm nhận
-        được.
-      </p>
     </section>
   );
 }

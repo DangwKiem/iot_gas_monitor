@@ -1,23 +1,30 @@
-import type { ReactNode } from 'react';
+import { userMessage } from '../lib/api.js';
 
 export const dateText = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleString('vi-VN') : 'Chưa xác định';
-export const conditionText = { gas: 'Gas', co: 'CO', flame: 'Flame' };
-export function PageTitle({
-  eyebrow,
-  title,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  children?: ReactNode;
-}) {
+export const conditionText = { gas: 'Khí gas', co: 'CO', flame: 'Lửa' };
+export const roleText = {
+  admin: 'Quản trị viên',
+  operator: 'Nhân viên vận hành',
+  viewer: 'Người xem',
+};
+export const connectionText: Record<string, string> = {
+  online: 'Đã kết nối',
+  offline: 'Mất kết nối',
+  never_seen: 'Chưa kết nối',
+};
+export const qualityText = {
+  valid: 'Hợp lệ',
+  invalid: 'Lỗi cảm biến',
+  warming_up: 'Đang làm nóng',
+  uncalibrated: 'Chưa hiệu chuẩn',
+  heating: 'Đang gia nhiệt',
+};
+export function PageTitle({ title }: { title: string }) {
   return (
     <div className="page-title">
       <div>
-        <span className="eyebrow">{eyebrow}</span>
         <h1>{title}</h1>
-        {children}
       </div>
     </div>
   );
@@ -35,7 +42,7 @@ export function LoadState({
   if (error)
     return (
       <div className="notice error" role="alert">
-        {error.message}
+        {userMessage(error)}
         {retry ? <button onClick={retry}>Thử lại</button> : null}
       </div>
     );

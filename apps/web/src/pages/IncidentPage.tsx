@@ -43,11 +43,8 @@ export default function IncidentPage({ user }: { user: UserView }) {
       {incident ? (
         <>
           <PageTitle
-            eyebrow="INCIDENT DETAIL"
             title={`Sự cố ${conditionText[incident.condition]} · ${incident.device_name}`}
-          >
-            <p>ID: {incident.id}</p>
-          </PageTitle>
+          />
           <section className="panel feature-section">
             <div className="button-row">
               <span className={`badge ${incident.status === 'active' ? 'danger' : ''}`}>
@@ -87,7 +84,7 @@ export default function IncidentPage({ user }: { user: UserView }) {
                 <p>{incident.acknowledgement.note || 'Không có ghi chú.'}</p>
               </>
             ) : user.role === 'viewer' ? (
-              <p className="muted">Chỉ operator/admin được xác nhận đã xem sự cố.</p>
+              <p className="muted">Bạn cần quyền vận hành hoặc quản trị để xác nhận sự cố.</p>
             ) : (
               <form onSubmit={submit} className="stack-form">
                 <label>
@@ -106,7 +103,7 @@ export default function IncidentPage({ user }: { user: UserView }) {
             <LoadState error={acknowledge.error} />
           </section>
           <section className="panel feature-section">
-            <h2>Timeline sự kiện</h2>
+            <h2>Diễn biến sự cố</h2>
             <ol className="timeline">
               {incident.events.map((event) => (
                 <li key={event.id}>
@@ -117,10 +114,8 @@ export default function IncidentPage({ user }: { user: UserView }) {
                         ? 'Nâng mức Critical'
                         : 'Kết thúc'}
                   </strong>
-                  <p>Thời điểm thiết bị: {dateText(event.occurred_at)}</p>
-                  <small>
-                    Server nhận: {dateText(event.received_at)} · seq {event.seq}
-                  </small>
+                  <p>Thời điểm xảy ra: {dateText(event.occurred_at)}</p>
+                  <small>Ghi nhận: {dateText(event.received_at)}</small>
                 </li>
               ))}
             </ol>

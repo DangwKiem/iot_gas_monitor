@@ -78,13 +78,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     expect(await page.evaluate(() => document.cookie.includes('iot_session'))).toBe(false);
     await page.reload();
     await page.getByRole('heading', { name: 'Tổng quan hệ thống' }).waitFor();
-    await page.getByText('Realtime kết nối', { exact: true }).waitFor();
+    await page.getByText('Đã kết nối trực tiếp', { exact: true }).waitFor();
     await page.getByRole('navigation').getByRole('link', { name: 'Thiết bị', exact: true }).click();
     await page.getByLabel('Tên thiết bị').fill('Browser simulator');
     await page.getByLabel('Nguồn dữ liệu').selectOption('simulator');
     await page.getByRole('button', { name: 'Thêm thiết bị' }).click();
-    await page.getByRole('button', { name: 'Cấp key' }).click();
-    const keyPanel = page.getByRole('region', { name: 'Credential mới' });
+    await page.getByRole('button', { name: 'Cấp khóa' }).click();
+    const keyPanel = page.getByRole('region', { name: 'Khóa kết nối mới' });
     const key = await keyPanel.locator('code').first().innerText();
     const device = await db.device.findFirstOrThrow({ where: { name: 'Browser simulator' } });
     simulatorId = device.id;
@@ -176,9 +176,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     await page.getByText('Đã kết thúc', { exact: true }).first().waitFor();
     await page
       .getByRole('navigation')
-      .getByRole('link', { name: 'Analytics & lịch sử', exact: true })
+      .getByRole('link', { name: 'Phân tích & lịch sử', exact: true })
       .click();
-    await page.getByRole('heading', { name: 'Analytics & lịch sử', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Phân tích & lịch sử', exact: true }).waitFor();
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Xuất CSV', exact: true }).click();
     const download = await downloadPromise;
@@ -188,8 +188,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     await page.getByRole('link', { name: 'Browser simulator', exact: true }).click();
     await page.getByLabel('Chu kỳ gửi (giây)').fill('10');
     await page.locator('input[name="gas_warning_on"]').fill('3250');
+    const savedConfig = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'PUT' &&
+        response.url().endsWith(`/devices/${simulatorId}/config`),
+    );
     await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click();
-    await page.getByText('Mong muốn: v2', { exact: true }).waitFor();
+    expect((await savedConfig).ok()).toBe(true);
+    await page.getByText('Đang chờ thiết bị cập nhật', { exact: true }).waitFor();
     const configResponse = await fetch(`${apiUrl}/api/v1/device/config`, {
       headers: { Authorization: `DeviceKey ${simulatorKey}` },
     });
@@ -213,9 +219,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
         })
       ).status,
     ).toBe(200);
-    await page.getByText('Đã áp dụng: v2', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Đổi key', exact: true }).first().click();
-    await page.getByRole('region', { name: 'Credential mới' }).waitFor();
+    await page.getByText('Thiết bị đã áp dụng cấu hình', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Đổi khóa', exact: true }).first().click();
+    await page.getByRole('region', { name: 'Khóa kết nối mới' }).waitFor();
     await page.getByRole('button', { name: 'Đã lưu, đóng', exact: true }).click();
     await page.getByRole('button', { name: 'Lưu trữ thiết bị', exact: true }).click();
     await page.getByText('Thiết bị đã lưu trữ', { exact: true }).waitFor();
@@ -236,11 +242,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
       .toBe(true);
     await page
       .getByRole('navigation')
-      .getByRole('link', { name: 'Analytics & lịch sử', exact: true })
+      .getByRole('link', { name: 'Phân tích & lịch sử', exact: true })
       .click();
     await page
       .getByRole('img', {
-        name: 'Biểu đồ analytics có khoảng trống khi thiếu dữ liệu',
+        name: 'Biểu đồ dữ liệu cảm biến',
         exact: true,
       })
       .waitFor();
@@ -376,7 +382,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
     await viewer.getByLabel('Email', { exact: true }).fill('viewer-browser@test.local');
     await viewer.getByLabel('Mật khẩu', { exact: true }).fill(updated);
     await viewer.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
-    await viewer.getByText('Realtime kết nối', { exact: true }).waitFor();
+    await viewer.getByText('Đã kết nối trực tiếp', { exact: true }).waitFor();
     await row.getByRole('button', { name: 'Khóa', exact: true }).click();
     await viewer
       .getByRole('button', { name: 'Đăng nhập', exact: true })
@@ -385,7 +391,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
       .getByRole('navigation')
       .getByRole('link', { name: 'Nhật ký quản trị', exact: true })
       .click();
-    await adminPage.getByRole('cell', { name: 'user.updated', exact: true }).first().waitFor();
+    await adminPage
+      .getByRole('cell', { name: 'Cập nhật tài khoản', exact: true })
+      .first()
+      .waitFor();
     await viewer.close();
     await adminPage.close();
   }, 60000);
@@ -416,7 +425,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
       await page.getByLabel('Email', { exact: true }).fill('browser@test.local');
       await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
       await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
-      await page.getByText('Realtime kết nối', { exact: true }).waitFor();
+      await page.getByText('Đã kết nối trực tiếp', { exact: true }).waitFor();
       await context.grantPermissions(['notifications'], { origin });
       if ((await page.evaluate(() => Notification.permission)) !== 'granted')
         skip(
@@ -478,9 +487,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('real browser + API + PostgreSQL
         .getByRole('navigation')
         .getByRole('link', { name: 'Cài đặt', exact: true })
         .click();
-      await page.getByRole('heading', { name: 'Thông báo Web Push', exact: true }).waitFor();
-      await page.getByText(/Backend chưa bật Web Push/).waitFor();
-      expect(await page.getByRole('button', { name: 'Bật Web Push', exact: true }).count()).toBe(0);
+      await page.getByRole('heading', { name: 'Thông báo trình duyệt', exact: true }).waitFor();
+      await page.getByText(/Thông báo trình duyệt hiện chưa khả dụng/).waitFor();
+      expect(await page.getByRole('button', { name: 'Bật thông báo', exact: true }).count()).toBe(
+        0,
+      );
       const worker = await page.evaluate(async () => {
         await navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
         const row = await navigator.serviceWorker.ready;

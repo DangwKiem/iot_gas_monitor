@@ -1,22 +1,16 @@
 import type { DeviceView } from '@iot/contracts';
 import { Thermometer, Droplets, Wind, Flame, Activity } from 'lucide-react';
+import { qualityText } from './FeatureUI.js';
 import { sensorFreshness } from '../lib/freshness.js';
 import { useEffect, useState } from 'react';
 
-const qualityText = {
-  valid: 'Tín hiệu hợp lệ',
-  invalid: 'Lỗi cảm biến',
-  warming_up: 'Đang làm nóng',
-  uncalibrated: 'Chưa hiệu chuẩn',
-  heating: 'Đang gia nhiệt',
-};
 export const alertText = {
-  normal: 'Không kích hoạt',
+  normal: 'Bình thường',
   active: 'Đang cảnh báo',
   warning: 'Warning · Cảnh báo',
   critical: 'Critical · Nguy cấp',
   unknown: 'Chưa xác định',
-  not_configured: 'Chưa cấu hình đánh giá',
+  not_configured: 'Chưa đặt ngưỡng',
 };
 
 export function SensorPanel({ device, now }: { device: DeviceView; now?: number }) {
@@ -37,7 +31,6 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
         <div className="empty">
           <Activity size={30} />
           <h3>Chưa có dữ liệu cảm biến</h3>
-          <p>Kết nối thiết bị để bắt đầu giám sát.</p>
         </div>
       ) : (
         <>
@@ -84,7 +77,9 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
                 aria-label={title}
               >
                 <div className="sensor-heading">
-                  <span>{title}</span>
+                  <span>
+                    {title === 'MQ-2' ? 'Khí gas · MQ-2' : title === 'MQ-7' ? 'CO · MQ-7' : title}
+                  </span>
                   <span className={`icon-box ${color}`}>
                     <Icon size={20} />
                   </span>
@@ -113,7 +108,7 @@ export function SensorPanel({ device, now }: { device: DeviceView; now?: number 
                 {reading.payload.sensors.flame.detected === null
                   ? 'Chưa xác định'
                   : reading.payload.sensors.flame.detected
-                    ? 'Có tín hiệu phát hiện lửa'
+                    ? 'Phát hiện lửa'
                     : 'Không phát hiện'}
               </p>
             </div>

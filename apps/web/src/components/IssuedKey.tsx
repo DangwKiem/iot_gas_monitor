@@ -14,14 +14,12 @@ export function IssuedKey({ issued, close }: { issued: IssuedCredential; close: 
     },
   });
   return (
-    <section className="panel key-panel" aria-label="Credential mới">
-      <h2>Key chỉ hiển thị một lần</h2>
-      <p>
-        Lưu vào cấu hình local của thiết bị hoặc simulator. Không đưa vào Git hay gửi ảnh công khai.
-      </p>
+    <section className="panel key-panel" aria-label="Khóa kết nối mới">
+      <h2>Khóa kết nối mới</h2>
+      <p>Khóa chỉ hiển thị một lần. Hãy lưu lại và giữ bí mật.</p>
       <code>{issued.key}</code>
       <p>
-        Device ID: <code>{issued.deviceId}</code>
+        Mã thiết bị: <code>{issued.deviceId}</code>
       </p>
       <div className="button-row">
         <button onClick={close}>Đã lưu, đóng</button>
@@ -30,7 +28,7 @@ export function IssuedKey({ issued, close }: { issued: IssuedCredential; close: 
           disabled={revoke.isPending}
           onClick={() => revoke.mutate()}
         >
-          Thu hồi key này
+          Thu hồi khóa này
         </button>
       </div>
       <LoadState error={revoke.error} />

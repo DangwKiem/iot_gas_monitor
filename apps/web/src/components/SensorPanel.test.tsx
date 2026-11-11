@@ -31,7 +31,7 @@ it('labels simulated raw gas readings without claiming PPM or safety', () => {
   render(<SensorPanel device={device()} now={now} />);
   expect(screen.getByText(/Dữ liệu mô phỏng/)).toBeInTheDocument();
   expect(screen.getByText('1250')).toBeInTheDocument();
-  expect(screen.getAllByText('Chưa cấu hình đánh giá')).toHaveLength(2);
+  expect(screen.getAllByText('Chưa đặt ngưỡng')).toHaveLength(2);
   expect(screen.queryByText(/an toàn/i)).not.toBeInTheDocument();
 });
 it('shows an invalid sensor as missing rather than zero', () => {

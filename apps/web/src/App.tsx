@@ -12,7 +12,6 @@ import {
   Bell,
   Sun,
   Moon,
-  Server,
   ChartNoAxesCombined,
   Users,
   ScrollText,
@@ -36,7 +35,7 @@ const navigation = [
   { path: '/app/overview', icon: LayoutDashboard, label: 'Tổng quan' },
   { path: '/app/monitoring', icon: Radio, label: 'Giám sát trực tiếp' },
   { path: '/app/alerts', icon: Bell, label: 'Cảnh báo & sự cố' },
-  { path: '/app/analytics', icon: ChartNoAxesCombined, label: 'Analytics & lịch sử' },
+  { path: '/app/analytics', icon: ChartNoAxesCombined, label: 'Phân tích & lịch sử' },
   { path: '/app/devices', icon: Cpu, label: 'Thiết bị' },
   { path: '/app/settings', icon: Settings, label: 'Cài đặt' },
 ];
@@ -159,7 +158,7 @@ export function App() {
       await api('/auth/logout', { method: 'POST' });
     } catch (error) {
       if (!(error instanceof HttpError && error.status === 401)) {
-        setLogoutError('Chưa đăng xuất được khỏi server. Vui lòng kiểm tra kết nối và thử lại.');
+        setLogoutError('Chưa thể đăng xuất. Kiểm tra kết nối và thử lại.');
         return;
       }
     }
@@ -172,14 +171,14 @@ export function App() {
   if (sessionQuery.isPending)
     return (
       <main className="login-form-area">
-        <div role="status">Đang kiểm tra phiên đăng nhập…</div>
+        <div role="status">Đang tải…</div>
       </main>
     );
   if (sessionQuery.isError)
     return (
       <main className="login-form-area">
         <section className="panel settings-panel">
-          <p role="alert">Không kiểm tra được phiên: {sessionQuery.error.message}</p>
+          <p role="alert">Không thể kết nối. Vui lòng thử lại.</p>
           <button onClick={() => void sessionQuery.refetch()}>Thử lại</button>
         </section>
       </main>
@@ -204,7 +203,6 @@ export function App() {
           </span>
           AirGuard
         </Link>
-        <span className="sidebar-label">KHÔNG GIAN GIÁM SÁT</span>
         <nav aria-label="Điều hướng chính">
           {navigation.map(({ path, icon: Icon, label }) => (
             <NavLink key={path} to={path}>
@@ -225,22 +223,14 @@ export function App() {
             </>
           ) : null}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="local-tag">
-            <Server size={16} />
-            <span>Giám sát khí gas</span>
-          </div>
-        </div>
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <span className="breadcrumb">
-            Workspace <span>/</span> Giám sát môi trường
-          </span>
+          <span className="breadcrumb">Giám sát môi trường</span>
           <div className="topbar-actions">
             <span className={`badge ${connected ? 'success' : ''}`}>
               <span className={`status-dot ${connected ? 'online' : 'offline'}`} />
-              {connected ? 'Realtime kết nối' : 'Đang kết nối lại'}
+              {connected ? 'Đã kết nối trực tiếp' : 'Đang kết nối lại'}
             </span>
             <button
               aria-label="Đổi giao diện"
@@ -274,14 +264,14 @@ export function App() {
           ) : null}
           {devicesQuery.isError ? (
             <div className="notice error" role="alert">
-              Không tải được dữ liệu: {devicesQuery.error.message}. Trạng thái kết nối chưa được xác
-              minh. <button onClick={() => void devicesQuery.refetch()}>Thử lại</button>
+              Không tải được thiết bị.{' '}
+              <button onClick={() => void devicesQuery.refetch()}>Thử lại</button>
               <button onClick={() => void logout()}>Đăng nhập lại</button>
             </div>
           ) : null}
           {states.isError ? (
             <div className="notice error" role="alert">
-              Chưa xác minh được số sự cố chưa kết thúc.{' '}
+              Không tải được trạng thái sự cố.{' '}
               <button onClick={() => void states.refetch()}>Thử lại</button>
             </div>
           ) : null}
@@ -331,10 +321,6 @@ export function App() {
               <Route path="*" element={<Navigate to="/app/overview" replace />} />
             </Routes>
           </Suspense>
-          <footer>
-            AirGuard Monitor <span>•</span> Nghiên cứu & học tập <span>•</span> Firmware tích hợp
-            sau
-          </footer>
         </main>
       </div>
     </div>

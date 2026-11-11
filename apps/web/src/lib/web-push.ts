@@ -36,7 +36,7 @@ export async function browserPushStatus() {
 }
 export async function enableBrowserPush(publicKey: string, includeSimulators: boolean) {
   if (!supportsWebPush())
-    throw new Error('Web Push cần HTTPS hoặc localhost và trình duyệt có hỗ trợ.');
+    throw new Error('Không thể bật thông báo. Hãy dùng trình duyệt hỗ trợ và kết nối bảo mật.');
   const permission =
     Notification.permission === 'granted'
       ? 'granted'
@@ -51,7 +51,7 @@ export async function enableBrowserPush(publicKey: string, includeSimulators: bo
   });
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error('Service worker chưa sẵn sàng. Tải lại trang rồi thử lại.')),
+      () => reject(new Error('Thông báo chưa sẵn sàng. Tải lại trang rồi thử lại.')),
       10000,
     );
     navigator.serviceWorker.ready.then(
@@ -61,7 +61,7 @@ export async function enableBrowserPush(publicKey: string, includeSimulators: bo
       },
       () => {
         clearTimeout(timer);
-        reject(new Error('Không kích hoạt được service worker.'));
+        reject(new Error('Không thể bật thông báo. Vui lòng thử lại.'));
       },
     );
   });

@@ -30,9 +30,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
   const rows = list.data?.pages.flatMap((page) => page.data) ?? [];
   return (
     <>
-      <PageTitle eyebrow="INCIDENT MANAGEMENT" title="Cảnh báo & sự cố">
-        <p>Theo dõi và xác nhận cảnh báo từ thiết bị.</p>
-      </PageTitle>
+      <PageTitle title="Cảnh báo & sự cố" />
       <form className="panel filter-grid" onSubmit={submit}>
         <label>
           Thiết bị
@@ -49,7 +47,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
           Điều kiện
           <select name="condition">
             <option value="">Tất cả</option>
-            <option value="gas">Gas</option>
+            <option value="gas">Khí gas</option>
             <option value="co">CO</option>
             <option value="flame">Lửa</option>
           </select>
@@ -98,7 +96,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
                 <th>Điều kiện</th>
                 <th>Mức độ</th>
                 <th>Trạng thái</th>
-                <th>Bắt đầu / nhận đầu tiên</th>
+                <th>Thời gian bắt đầu</th>
                 <th>Xác nhận</th>
                 <th>Chi tiết</th>
               </tr>
@@ -114,8 +112,8 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
                   </td>
                   <td>{conditionText[i.condition]}</td>
                   <td>
-                    <span className={`badge ${i.severity === 'critical' ? 'danger' : ''}`}>
-                      {i.severity}
+                    <span className={`badge level-${i.severity}`}>
+                      {i.severity === 'critical' ? 'Critical' : 'Warning'}
                     </span>
                   </td>
                   <td>{i.status === 'active' ? 'Chưa kết thúc' : 'Đã kết thúc'}</td>

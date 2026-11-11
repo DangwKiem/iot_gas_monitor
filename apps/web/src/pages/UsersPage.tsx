@@ -36,15 +36,14 @@ export default function UsersPage({ user }: { user: UserView }) {
     const data = new FormData(form);
     create.mutate(Object.fromEntries(data), { onSuccess: () => form.reset() });
   }
-  if (user.role !== 'admin') return <p role="alert">Chỉ admin được quản lý tài khoản.</p>;
+  if (user.role !== 'admin')
+    return <p role="alert">Bạn cần quyền quản trị để quản lý tài khoản.</p>;
   return (
     <>
-      <PageTitle eyebrow="ACCESS MANAGEMENT" title="Tài khoản">
-        <p>
-          Admin quản lý quyền và khóa tài khoản. Thay đổi quyền/mật khẩu thu hồi mọi phiên của tài
-          khoản đó.
-        </p>
-      </PageTitle>
+      <PageTitle title="Tài khoản" />
+      <p className="caption">
+        Đổi quyền, khóa tài khoản hoặc đặt lại mật khẩu sẽ đăng xuất tài khoản đó trên mọi thiết bị.
+      </p>
       <form className="panel inline-form" onSubmit={submit}>
         <label>
           Email tài khoản mới
@@ -64,9 +63,9 @@ export default function UsersPage({ user }: { user: UserView }) {
         <label>
           Quyền ban đầu
           <select name="role" defaultValue="viewer">
-            <option value="viewer">viewer — chỉ đọc</option>
-            <option value="operator">operator — xác nhận sự cố</option>
-            <option value="admin">admin — quản trị</option>
+            <option value="viewer">Người xem</option>
+            <option value="operator">Nhân viên vận hành</option>
+            <option value="admin">Quản trị viên</option>
           </select>
         </label>
         <button className="primary" disabled={create.isPending}>
@@ -106,9 +105,9 @@ export default function UsersPage({ user }: { user: UserView }) {
                       value={u.role}
                       onChange={(e) => update.mutate({ id: u.id, role: e.target.value })}
                     >
-                      <option value="viewer">viewer</option>
-                      <option value="operator">operator</option>
-                      <option value="admin">admin</option>
+                      <option value="viewer">Người xem</option>
+                      <option value="operator">Nhân viên vận hành</option>
+                      <option value="admin">Quản trị viên</option>
                     </select>
                   </td>
                   <td>{u.active ? 'Hoạt động' : 'Đã khóa'}</td>
@@ -162,11 +161,7 @@ export default function UsersPage({ user }: { user: UserView }) {
           Tải thêm tài khoản
         </button>
       ) : null}
-      <p className="caption">
-        Không được tự khóa/hạ quyền tài khoản đang dùng hoặc loại bỏ admin cuối cùng. Không xóa tài
-        khoản để giữ liên kết audit và xác nhận sự cố. Mật khẩu tối thiểu 12 ký tự, không được ghi
-        vào log.
-      </p>
+      <p className="caption">Không thể tự khóa, hạ quyền hoặc khóa quản trị viên cuối cùng.</p>
     </>
   );
 }

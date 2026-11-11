@@ -21,9 +21,7 @@ export default function OverviewPage({
     <>
       <div className="page-title">
         <div>
-          <span className="eyebrow">SYSTEM OVERVIEW</span>
           <h1>Tổng quan hệ thống</h1>
-          <p>Quan sát kết nối và dữ liệu cảm biến tại một nơi.</p>
         </div>
       </div>
       <div className="stats-grid">
@@ -32,34 +30,29 @@ export default function OverviewPage({
             title: 'Tổng thiết bị',
             value: devices.length,
             icon: Cpu,
-            caption: 'Thiết bị đang quản lý',
           },
           {
-            title: 'Đang online',
+            title: 'Đã kết nối',
             value: online,
             icon: Radio,
-            caption: 'Thiết bị đang kết nối',
           },
           {
-            title: 'Chưa online',
+            title: 'Chưa kết nối',
             value: devices.length - online,
             icon: Server,
-            caption: 'Offline hoặc chưa từng kết nối',
           },
           {
             title: 'Sự cố chưa kết thúc',
             value: activeIncidents,
             icon: Bell,
-            caption: 'Xác nhận đã xem không đóng sự cố',
           },
-        ].map(({ title, value, icon: Icon, caption }) => (
+        ].map(({ title, value, icon: Icon }) => (
           <article className="panel stat-card" key={title}>
             <span>
               {title}
               <Icon size={18} />
             </span>
             <strong>{value ?? '—'}</strong>
-            <small>{caption}</small>
           </article>
         ))}
       </div>
@@ -67,9 +60,7 @@ export default function OverviewPage({
         <div>
           <h2>Dữ liệu cảm biến</h2>
           <p className="muted">
-            {selected
-              ? `${selected.name} · Nhận cuối: ${dateText(selected.last_seen_at)}`
-              : 'Chọn một nguồn dữ liệu để bắt đầu'}
+            {selected ? `Cập nhật: ${dateText(selected.last_seen_at)}` : null}
           </p>
         </div>
         {selected ? (
@@ -92,7 +83,6 @@ export default function OverviewPage({
         <div className="panel empty">
           <Cpu size={34} />
           <h3>Chưa có thiết bị</h3>
-          <p>Thêm thiết bị để bắt đầu giám sát.</p>
           <Link className="primary" to="/app/devices">
             Quản lý thiết bị
             <ArrowUpRight size={16} />

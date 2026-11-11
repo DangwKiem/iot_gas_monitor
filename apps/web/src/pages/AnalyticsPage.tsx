@@ -13,7 +13,7 @@ import {
 import type { AnalyticsView, DeviceView, ReadingView, Stats } from '@iot/contracts';
 import { api, apiPage, downloadCsv } from '../lib/api.js';
 import { plotSeries } from '../lib/analytics.js';
-import { PageTitle, LoadState, dateText } from '../components/FeatureUI.js';
+import { PageTitle, LoadState, dateText, qualityText } from '../components/FeatureUI.js';
 
 function localInput(date: Date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -48,7 +48,7 @@ function Summary({ stats, unit }: { stats: Stats; unit: string }) {
           <strong>{numberText(value as number | null)}</strong>
           <small>
             {title === 'Mẫu hợp lệ'
-              ? `${stats.invalid_count} mẫu lỗi/không đủ điều kiện · ${stats.total_count} tổng mẫu`
+              ? `${stats.invalid_count} mẫu không hợp lệ · ${stats.total_count} tổng mẫu`
               : unit}
           </small>
         </article>
@@ -101,12 +101,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
   const result = analytics.data;
   return (
     <>
-      <PageTitle eyebrow="HISTORICAL ANALYTICS" title="Analytics & lịch sử">
-        <p>
-          Thống kê mẫu đủ điều kiện, lọc thời gian và xuất dữ liệu thực tế. Khoảng thời gian [từ,
-          đến) tối đa 90 ngày.
-        </p>
-      </PageTitle>
+      <PageTitle title="Phân tích & lịch sử" />
       {!selected ? (
         <div className="panel empty">Chưa có thiết bị để phân tích.</div>
       ) : (
@@ -142,13 +137,13 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
               />
             </label>
             <label>
-              Cơ sở thời gian
+              Thời gian lọc
               <select
                 value={draft.time_basis}
                 onChange={(e) => setDraft({ ...draft, time_basis: e.target.value })}
               >
-                <option value="sampled">Thời điểm đo đã đồng bộ</option>
-                <option value="received">Thời điểm server nhận</option>
+                <option value="sampled">Thời điểm đo</option>
+                <option value="received">Thời điểm nhận</option>
               </select>
             </label>
             <label>
@@ -159,12 +154,12 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
               >
                 <option value="temperature_c">Nhiệt độ (°C)</option>
                 <option value="humidity_pct">Độ ẩm (%RH)</option>
-                <option value="mq2_adc">MQ-2 ADC thô</option>
-                <option value="mq7_adc">MQ-7 ADC thô</option>
+                <option value="mq2_adc">Khí gas · MQ-2 (ADC)</option>
+                <option value="mq7_adc">CO · MQ-7 (ADC)</option>
               </select>
             </label>
             <label>
-              Độ rộng bucket
+              Nhóm theo
               <select
                 value={draft.bucket}
                 onChange={(e) =>
@@ -173,7 +168,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
               >
                 <option value="minute">1 phút</option>
                 <option value="hour">1 giờ</option>
-                <option value="day">1 ngày UTC</option>
+                <option value="day">1 ngày (UTC)</option>
               </select>
             </label>
             {draft.metric.endsWith('_adc') ? (
@@ -184,7 +179,6 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                   min={8}
                   max={16}
                   value={draft.adc_bits}
-                  placeholder="Tự kiểm tra tương thích"
                   onChange={(e) => setDraft({ ...draft, adc_bits: e.target.value })}
                 />
               </label>
@@ -195,7 +189,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                 checked={draft.compare}
                 onChange={(e) => setDraft({ ...draft, compare: e.target.checked })}
               />
-              So sánh kỳ trước cùng độ dài
+              So sánh với kỳ trước
             </label>
             <button className="primary">Áp dụng bộ lọc</button>
           </form>
@@ -230,8 +224,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
             <>
               {result.uses_rollups ? (
                 <p className="notice" role="status">
-                  Khoảng này kết hợp raw còn lưu và dữ liệu đã tổng hợp. CSV raw có thể không còn
-                  đầy đủ; không thể khôi phục từng mẫu từ rollup.
+                  Một phần dữ liệu đã được tổng hợp. CSV có thể không đủ các lần đo.
                 </p>
               ) : null}
               <div className="section-heading">
@@ -253,9 +246,9 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                       <thead>
                         <tr>
                           <th>Kỳ</th>
-                          <th>Min</th>
-                          <th>Max</th>
-                          <th>Average ({result.unit})</th>
+                          <th>Nhỏ nhất</th>
+                          <th>Lớn nhất</th>
+                          <th>Trung bình ({result.unit})</th>
                           <th>Mẫu hợp lệ</th>
                         </tr>
                       </thead>
@@ -280,12 +273,8 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                 </section>
               ) : null}
               <section className="panel chart-panel">
-                <h2>Diễn biến theo bucket ({result.unit})</h2>
-                <div
-                  className="chart"
-                  role="img"
-                  aria-label="Biểu đồ analytics có khoảng trống khi thiếu dữ liệu"
-                >
+                <h2>Diễn biến ({result.unit})</h2>
+                <div className="chart" role="img" aria-label="Biểu đồ dữ liệu cảm biến">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={plotSeries(result, filters.bucket)}>
                       <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
@@ -300,7 +289,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                       <Legend />
                       <Line
                         dataKey="average"
-                        name="Average"
+                        name="Trung bình"
                         type="linear"
                         stroke="#2dd4bf"
                         connectNulls={false}
@@ -308,7 +297,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                       />
                       <Line
                         dataKey="min"
-                        name="Min"
+                        name="Nhỏ nhất"
                         type="linear"
                         stroke="#38bdf8"
                         dot={false}
@@ -317,7 +306,7 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                       />
                       <Line
                         dataKey="max"
-                        name="Max"
+                        name="Lớn nhất"
                         type="linear"
                         stroke="#f59e0b"
                         dot={false}
@@ -327,16 +316,11 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="caption">Khoảng trống thể hiện thời gian chưa có dữ liệu hợp lệ.</p>
               </section>
             </>
           ) : null}
           <section className="panel feature-section">
             <h2>Lịch sử bản ghi</h2>
-            <p className="caption">
-              Thứ tự server nhận giảm dần; gồm cả mẫu lỗi để đối soát. CSV xuất tất cả sensor theo
-              cùng bộ lọc thời gian, tối đa 100.000 dòng.
-            </p>
             <LoadState
               pending={history.isPending}
               error={history.error}
@@ -347,14 +331,14 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                 <thead>
                   <tr>
                     <th>Thời điểm đo</th>
-                    <th>Server nhận</th>
+                    <th>Thời điểm nhận</th>
                     <th>°C</th>
                     <th>%RH</th>
-                    <th>DHT quality</th>
+                    <th>Trạng thái DHT11</th>
                     <th>MQ-2 ADC</th>
                     <th>MQ-7 ADC</th>
-                    <th>Gas quality</th>
-                    <th>Flame</th>
+                    <th>Trạng thái MQ-2 / MQ-7</th>
+                    <th>Lửa</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -366,11 +350,12 @@ export default function AnalyticsPage({ devices }: { devices: DeviceView[] }) {
                         <td>{dateText(r.received_at)}</td>
                         <td>{numberText(r.payload.sensors.dht11.temperature_c)}</td>
                         <td>{numberText(r.payload.sensors.dht11.humidity_pct)}</td>
-                        <td>{r.payload.sensors.dht11.quality}</td>
+                        <td>{qualityText[r.payload.sensors.dht11.quality]}</td>
                         <td>{numberText(r.payload.sensors.mq2.adc_raw)}</td>
                         <td>{numberText(r.payload.sensors.mq7.adc_raw)}</td>
                         <td>
-                          {r.payload.sensors.mq2.quality} / {r.payload.sensors.mq7.quality}
+                          {qualityText[r.payload.sensors.mq2.quality]} /{' '}
+                          {qualityText[r.payload.sensors.mq7.quality]}
                         </td>
                         <td>
                           {r.payload.sensors.flame.detected === null

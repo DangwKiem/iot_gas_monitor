@@ -4,10 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Cpu, KeyRound, Plus } from 'lucide-react';
 import type { DeviceView, UserView } from '@iot/contracts';
 import { api } from '../lib/api.js';
-import { PageTitle, LoadState, dateText } from '../components/FeatureUI.js';
+import { PageTitle, LoadState, dateText, connectionText } from '../components/FeatureUI.js';
 import { IssuedKey, type IssuedCredential } from '../components/IssuedKey.js';
 
-const statusText = { online: 'Online', offline: 'Offline', never_seen: 'Chưa kết nối' };
 export default function DevicesPage({ devices, user }: { devices: DeviceView[]; user: UserView }) {
   const client = useQueryClient();
   const [showArchived, setShowArchived] = useState(false);
@@ -44,9 +43,7 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
   }
   return (
     <>
-      <PageTitle eyebrow="DEVICE MANAGEMENT" title="Thiết bị">
-        <p>Quản lý thiết bị, vị trí lắp đặt và kết nối.</p>
-      </PageTitle>
+      <PageTitle title="Thiết bị" />
       {user.role === 'admin' ? (
         <form className="panel inline-form" onSubmit={submit}>
           <label>
@@ -98,18 +95,17 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
                   <Link to={`/app/devices/${d.id}`}>
                     <strong>{d.name}</strong>
                   </Link>
-                  <small className="device-id">{d.id}</small>
                   {d.archived_at ? <span className="badge">Đã lưu trữ</span> : null}
                 </td>
                 <td>{d.location || '—'}</td>
                 <td>
                   <span className={`badge ${d.source_kind === 'simulator' ? 'simulation' : ''}`}>
-                    {d.source_kind === 'simulator' ? 'Mô phỏng' : 'Phần cứng'}
+                    {d.source_kind === 'simulator' ? 'Mô phỏng' : 'Thiết bị thật'}
                   </span>
                 </td>
                 <td>
                   <span className={`status-dot ${d.status}`} />
-                  {statusText[d.status]}
+                  {connectionText[d.status]}
                 </td>
                 <td>{dateText(d.last_seen_at)}</td>
                 <td>
@@ -119,10 +115,10 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
                       onClick={() => issue.mutate(d.id)}
                     >
                       <KeyRound size={15} />
-                      Cấp key
+                      Cấp khóa
                     </button>
                   ) : (
-                    'Chỉ admin'
+                    'Chỉ quản trị viên'
                   )}
                 </td>
               </tr>
@@ -133,7 +129,6 @@ export default function DevicesPage({ devices, user }: { devices: DeviceView[]; 
           <div className="empty">
             <Cpu size={30} />
             <h3>Chưa có thiết bị</h3>
-            <p>Thêm thiết bị và cấp khóa kết nối.</p>
           </div>
         ) : null}
       </div>
