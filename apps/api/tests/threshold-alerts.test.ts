@@ -16,6 +16,57 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('threshold warning and critical 
   });
   afterAll(() => db.$disconnect());
 
+  it('preserves critical transitions in a queued batch and does not duplicate incidents on retry', async () => {
+    const queued = await featureFixture(db, app, 'queued-critical');
+    const batch = queued.payload(3);
+    batch.readings = ['normal', 'critical', 'normal'].map((gas, i) => {
+      const reading = queued.payload(i + 1).readings[0]!;
+      reading.alert_snapshot.gas = gas as 'normal' | 'critical';
+      return reading;
+    });
+    const send = () =>
+      request(app).post('/api/v1/device/telemetry').set(queued.deviceHeaders).send(batch);
+    const result = await send();
+    expect(result.status).toBe(200);
+    expect(result.body.data.accepted.map((entry: { seq: string }) => entry.seq)).toEqual([
+      '1',
+      '2',
+      '3',
+    ]);
+    const incident = await db.alertIncident.findFirstOrThrow({
+      where: { deviceId: queued.deviceId, condition: 'gas' },
+    });
+    expect(incident).toMatchObject({ severity: 'critical', status: 'ended' });
+    expect(await db.alertEvent.count({ where: { incidentId: incident.id } })).toBe(2);
+    const retry = await send();
+    expect(retry.status).toBe(200);
+    expect(retry.body.data.accepted.every((entry: { duplicate: boolean }) => entry.duplicate)).toBe(
+      true,
+    );
+    expect(await db.sensorReading.count({ where: { deviceId: queued.deviceId } })).toBe(3);
+    expect(
+      await db.alertIncident.count({ where: { deviceId: queued.deviceId, condition: 'gas' } }),
+    ).toBe(1);
+    const active = queued.payload(5);
+    active.readings = [queued.payload(4).readings[0]!, active.readings[0]!];
+    active.readings[0]!.alert_snapshot.gas = 'normal';
+    active.readings[1]!.alert_snapshot.gas = 'critical';
+    expect(
+      (await request(app).post('/api/v1/device/telemetry').set(queued.deviceHeaders).send(active))
+        .status,
+    ).toBe(200);
+    const view = await request(app)
+      .get(`/api/v1/devices/${queued.deviceId}`)
+      .set(queued.headers.viewer!);
+    expect(view.body.data.latest.payload.seq).toBe('5');
+    expect(view.body.data.latest.payload.alert_snapshot.gas).toBe('critical');
+    expect(
+      await db.alertIncident.count({
+        where: { deviceId: queued.deviceId, condition: 'gas', status: 'active' },
+      }),
+    ).toBe(1);
+  });
+
   it('escalates the same incident, notifies each severity once, and preserves incidents on faults', async () => {
     const send = async (seq: number, state: string, invalid = false) => {
       const payload = f.payload(seq);

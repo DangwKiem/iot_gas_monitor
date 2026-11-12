@@ -65,6 +65,8 @@ HTTP LAN truyền DeviceKey dạng rõ và chỉ dành cho mạng riêng tin c�
 
 Firmware dừng gửi khi gặp 401/403/409/422 để bạn sửa lỗi cấu hình rồi khởi động lại. Lỗi kết nối, 429 và 5xx được retry cùng mẫu với backoff có jitter. Chỉ bỏ mẫu khỏi hàng đợi khi ACK khớp boot ID và sequence.
 
+Cấu hình lưu trong NVS được gắn với Device ID và địa chỉ API. Khi chuyển từ local sang cloud hoặc đổi thiết bị, firmware bỏ qua cấu hình lưu của đích cũ và đồng bộ lại từ server mới. Cache từ firmware cũ chưa có thông tin này cũng được đồng bộ lại một lần. Không cần xóa flash/NVS; boot counter vẫn được giữ nguyên. Với cùng thiết bị/server, firmware tiếp tục từ chối cấu hình có phiên bản thấp hơn cấu hình đã áp dụng.
+
 ## Ngưỡng và trạng thái cảnh báo
 
 Firmware 0.3.0 đánh giá số đo cảm biến trực tiếp. Ngưỡng mặc định dùng số đếm ADC 12 bit và được khai báo trong `GasMonitor/AlertPolicy.h`.
@@ -123,8 +125,9 @@ Nếu cả hai cách đều im, kiểm tra mã module, pinout, nguồn VIN–GND
 ## Hành vi truyền dữ liệu
 
 - Cảm biến/LED/còi và tác vụ mạng chạy độc lập. Mỗi lần đổi mức cảnh báo sẽ enqueue mẫu ngay, ngoài chu kỳ gửi định kỳ.
-- Hàng đợi RAM giữ tối đa 12 mẫu chờ và 1 mẫu đang gửi. Khi đầy, Serial ghi sequence bị mất. Khởi động lại sẽ mất hàng đợi RAM. Mẫu quá 24 giờ bị bỏ theo cửa sổ API.
-- Boot counter tăng và ghi NVS trước khi kết nối. Boot ID mới mỗi lần khởi động. Retry giữ nguyên nội dung reading và chỉ cập nhật uptime của transmission.
+- Hàng đợi RAM giữ tối đa 12 mẫu chờ và một lô tối đa 8 mẫu đang gửi. Firmware gửi ngay các mẫu đã xếp hàng, không đợi đủ lô; chỉ kiểm tra cấu hình khi không có lô tới hạn gửi. Khi đầy, Serial ghi sequence bị mất. Khởi động lại sẽ mất hàng đợi RAM. Mẫu quá 24 giờ bị bỏ theo cửa sổ API.
+- Kiểm tra cấu hình dùng ETag: phản hồi 304 không ghi lại NVS hoặc gửi ACK thừa. Serial `NET ACK` ghi số mẫu trong lô, tuổi mẫu cũ nhất, thời gian yêu cầu và số mẫu còn chờ để chẩn đoán độ trễ mạng.
+- Boot counter tăng và ghi NVS trước khi kết nối. Boot ID mới mỗi lần khởi động. Retry giữ nguyên thứ tự và nội dung các reading trong lô, chỉ cập nhật uptime của transmission. Chỉ bỏ lô sau khi toàn bộ ACK khớp boot ID và sequence.
 - Khi đã có giờ NTP, firmware gửi thời điểm đo UTC. Trước khi đồng bộ, mẫu có `sampled_at=null`, `time_quality=unsynced`; API xác định tuổi theo uptime.
 - Mẫu lỗi gửi null cùng quality. ADC chạm trần vẫn được báo lỗi. Firmware không suy ra nồng độ PPM/AQI từ ADC.
 - Thông báo Telegram/Web Push được xử lý bởi backend theo cấu hình trong README gốc. Firmware gửi mức warning/critical của từng điều kiện; Flame phát hiện luôn là critical.

@@ -28,6 +28,7 @@ char bootId[37];
 uint64_t bootCounter = 0;
 uint64_t sequence = 0;
 bool stopped = false;
+String configEtag;
 
 uint64_t uptimeMs() {
   return static_cast<uint64_t>(esp_timer_get_time()) / 1000;
@@ -70,7 +71,7 @@ bool validApiUrl() {
          (ip[0] == 192 && ip[1] == 168);
 }
 
-int apiRequest(const char* path, const char* body, String& response) {
+int apiRequest(const char* path, const char* body, String& response, const char* ifNoneMatch = nullptr) {
   NetworkClient plainClient;
   NetworkClientSecure secureClient;
   HTTPClient http;
@@ -88,6 +89,7 @@ int apiRequest(const char* path, const char* body, String& response) {
   http.setReuse(false);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.addHeader("Authorization", String("DeviceKey ") + kDeviceKey);
+  if (ifNoneMatch && *ifNoneMatch) http.addHeader("If-None-Match", ifNoneMatch);
   int status;
   if (body) {
     http.addHeader("Content-Type", "application/json");
@@ -111,7 +113,8 @@ void checkFatalStatus(int status) {
 
 bool syncConfig() {
   String response;
-  const int status = apiRequest("/api/v1/device/config", nullptr, response);
+  const int status = apiRequest("/api/v1/device/config", nullptr, response, configEtag.c_str());
+  if (status == 304) return configEtag.length() > 0;
   if (status != 200) {
     checkFatalStatus(status);
     Serial.printf("NET config HTTP %d\n", status);
@@ -123,12 +126,14 @@ bool syncConfig() {
   const cJSON* config = cJSON_GetObjectItemCaseSensitive(data, "config");
   const char* hash = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(data, "content_hash"));
   TelemetryConfiguration parsed;
+  const int currentVersion = telemetryConfiguration().version;
   const bool valid = cJSON_IsNumber(version) && version->valuedouble == version->valueint &&
-                     version->valueint >= telemetryConfiguration().version && hash && strlen(hash) == 64 &&
+                     version->valueint >= currentVersion && hash && strlen(hash) == 64 &&
                      parseTelemetryConfiguration(config, version->valueint, parsed);
   if (!valid) {
+    Serial.printf("NET invalid config response: server version=%d, active version=%d\n",
+                  cJSON_IsNumber(version) ? version->valueint : -1, currentVersion);
     cJSON_Delete(root);
-    Serial.println("NET invalid config response");
     return false;
   }
   char* canonical = canonicalConfiguration(parsed, cJSON_HasObjectItem(config, "alert_policy"));
@@ -151,8 +156,19 @@ bool syncConfig() {
     Serial.println("NET config hash mismatch");
     return false;
   }
-  const String saved = String("{\"version\":") + parsed.version + ",\"config\":" + canonical + "}";
   cJSON_free(canonical);
+  char* savedJson = serializeStoredConfiguration(parsed, cJSON_HasObjectItem(config, "alert_policy"),
+                                                kApiBaseUrl, kDeviceId);
+  if (!savedJson) {
+    cJSON_Delete(root);
+    return false;
+  }
+  const String saved(savedJson);
+  cJSON_free(savedJson);
+  if (saved.isEmpty()) {
+    cJSON_Delete(root);
+    return false;
+  }
   Preferences preferences;
   if (!preferences.begin("airguard", false)) {
     cJSON_Delete(root);
@@ -182,6 +198,7 @@ bool syncConfig() {
   const bool accepted = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(ackData, "accepted"));
   cJSON_Delete(ackRoot);
   if (!accepted) return false;
+  configEtag = String("\"") + parsed.version + "-" + calculatedHash + "\"";
   Serial.printf("NET config v%d, interval %lu ms\n", parsed.version, static_cast<unsigned long>(parsed.intervalMs));
   return true;
 }
@@ -192,9 +209,9 @@ void networkTask(void*) {
   WiFi.setAutoReconnect(true);
   WiFi.begin(kWifiSsid, kWifiPassword);
   bool connected = false;
-  bool haveSample = false;
   bool configSynced = false;
-  TelemetrySample pending;
+  TelemetrySample pending[kMaxTelemetryBatch];
+  size_t pendingCount = 0;
   uint64_t lastWifiAttempt = uptimeMs();
   uint64_t nextConfigAt = 0;
   uint64_t nextUploadAt = 0;
@@ -221,37 +238,58 @@ void networkTask(void*) {
     }
     // TLS certificate validation also checks certificate validity dates.
     if (String(kApiBaseUrl).startsWith("https://") && time(nullptr) < 1735689600) continue;
-    if (now >= nextConfigAt) {
+    if (!configSynced && now >= nextConfigAt) {
       const bool synced = syncConfig();
       if (synced) configSynced = true;
       nextConfigAt = uptimeMs() + (synced ? 5000 : 10000);
     }
     if (!configSynced || stopped) continue;
-    if (!haveSample) haveSample = xQueueReceive(sampleQueue, &pending, 0) == pdTRUE;
+    if (pendingCount == 0) {
+      while (pendingCount < kMaxTelemetryBatch &&
+             xQueueReceive(sampleQueue, &pending[pendingCount], 0) == pdTRUE) ++pendingCount;
+    }
     const uint64_t uploadNow = uptimeMs();
-    if (!haveSample || uploadNow < nextUploadAt) continue;
-    if (uploadNow - pending.uptimeMs > kMaxSampleAgeMs) {
-      Serial.printf("NET dropped expired seq=%llu\n", static_cast<unsigned long long>(pending.sequence));
-      haveSample = false;
+    size_t expired = 0;
+    while (expired < pendingCount && uploadNow - pending[expired].uptimeMs > kMaxSampleAgeMs) {
+      Serial.printf("NET dropped expired seq=%llu\n", static_cast<unsigned long long>(pending[expired].sequence));
+      ++expired;
+    }
+    if (expired) {
+      for (size_t i = expired; i < pendingCount; ++i) pending[i - expired] = pending[i];
+      pendingCount -= expired;
+    }
+    // Once provisioned, send queued readings before spending a TLS round trip on config polling.
+    if (pendingCount == 0 || uploadNow < nextUploadAt) {
+      if (uploadNow >= nextConfigAt) {
+        const bool synced = syncConfig();
+        nextConfigAt = uptimeMs() + (synced ? 5000 : 10000);
+      }
       continue;
     }
-    char* body = encodeTelemetry(pending, kDeviceId, bootId, bootCounter, uptimeMs());
+    char* body = encodeTelemetryBatch(pending, pendingCount, kDeviceId, bootId, bootCounter, uptimeMs());
     if (!body) {
-      nextUploadAt = now + 1000;
+      nextUploadAt = uptimeMs() + 1000;
       continue;
     }
     String response;
     const int status = apiRequest("/api/v1/device/telemetry", body, response);
     cJSON_free(body);
-    if (status == 200 && telemetryAcknowledged(response.c_str(), bootId, pending.sequence)) {
-      Serial.printf("NET ACK seq=%llu\n", static_cast<unsigned long long>(pending.sequence));
-      haveSample = false;
+    if (status == 200 && telemetryBatchAcknowledged(response.c_str(), bootId, pending, pendingCount)) {
+      Serial.printf("NET ACK seq=%llu, batch=%u, oldest=%llu ms, request=%llu ms, queue=%u\n",
+                    static_cast<unsigned long long>(pending[pendingCount - 1].sequence),
+                    static_cast<unsigned>(pendingCount),
+                    static_cast<unsigned long long>(uptimeMs() - pending[0].uptimeMs),
+                    static_cast<unsigned long long>(uptimeMs() - uploadNow),
+                    static_cast<unsigned>(uxQueueMessagesWaiting(sampleQueue)));
+      pendingCount = 0;
       backoffMs = 1000;
       nextUploadAt = 0;
     } else {
       checkFatalStatus(status);
-      Serial.printf("NET telemetry HTTP %d; keeping seq=%llu for retry\n", status,
-                    static_cast<unsigned long long>(pending.sequence));
+      Serial.printf("NET telemetry HTTP %d; keeping seq=%llu..%llu (%u samples) for retry\n", status,
+                    static_cast<unsigned long long>(pending[0].sequence),
+                    static_cast<unsigned long long>(pending[pendingCount - 1].sequence),
+                    static_cast<unsigned>(pendingCount));
       nextUploadAt = uptimeMs() + backoffMs + esp_random() % 500;
       backoffMs = min(backoffMs * 2, static_cast<uint32_t>(60000));
     }
@@ -265,11 +303,12 @@ void startTelemetryNetwork() {
     const String saved = stored.getString("configuration");
     stored.end();
     cJSON* root = cJSON_Parse(saved.c_str());
-    const cJSON* version = cJSON_GetObjectItemCaseSensitive(root, "version");
     TelemetryConfiguration restored;
-    if (cJSON_IsNumber(version) && version->valuedouble == version->valueint &&
-        parseTelemetryConfiguration(cJSON_GetObjectItemCaseSensitive(root, "config"), version->valueint, restored)) {
+    if (restoreStoredConfiguration(root, kApiBaseUrl, kDeviceId, restored)) {
       activeConfiguration = restored;
+      Serial.printf("NET restored config v%d\n", restored.version);
+    } else if (saved.length()) {
+      Serial.println("NET cached config skipped: device/server changed or legacy cache; fetching current config");
     }
     cJSON_Delete(root);
   }

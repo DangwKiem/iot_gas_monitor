@@ -1,5 +1,7 @@
 #include "AlertPolicyJson.h"
 
+#include <cstring>
+
 namespace {
 bool integerField(const cJSON* object, const char* name, int& value) {
   const cJSON* field = cJSON_GetObjectItemCaseSensitive(object, name);
@@ -62,4 +64,31 @@ char* canonicalConfiguration(const TelemetryConfiguration& config, bool includeP
   char* text = ok ? cJSON_PrintUnformatted(root) : nullptr;
   cJSON_Delete(root);
   return text;
+}
+
+char* serializeStoredConfiguration(const TelemetryConfiguration& config, bool includePolicy,
+                                   const char* apiBaseUrl, const char* deviceId) {
+  if (!apiBaseUrl || !deviceId) return nullptr;
+  char* canonical = canonicalConfiguration(config, includePolicy);
+  if (!canonical) return nullptr;
+  cJSON* root = cJSON_CreateObject();
+  const bool ok = root && cJSON_AddStringToObject(root, "api_base_url", apiBaseUrl) &&
+                  cJSON_AddStringToObject(root, "device_id", deviceId) &&
+                  cJSON_AddNumberToObject(root, "version", config.version) &&
+                  cJSON_AddRawToObject(root, "config", canonical);
+  cJSON_free(canonical);
+  char* text = ok ? cJSON_PrintUnformatted(root) : nullptr;
+  cJSON_Delete(root);
+  return text;
+}
+
+bool restoreStoredConfiguration(const cJSON* stored, const char* apiBaseUrl,
+                                const char* deviceId, TelemetryConfiguration& output) {
+  const char* savedApi = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(stored, "api_base_url"));
+  const char* savedDevice = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(stored, "device_id"));
+  int version;
+  return apiBaseUrl && deviceId && savedApi && savedDevice &&
+         strcmp(savedApi, apiBaseUrl) == 0 && strcmp(savedDevice, deviceId) == 0 &&
+         integerField(stored, "version", version) &&
+         parseTelemetryConfiguration(cJSON_GetObjectItemCaseSensitive(stored, "config"), version, output);
 }

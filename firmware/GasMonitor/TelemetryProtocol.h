@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include "AlertPolicy.h"
 
-constexpr const char* kFirmwareVersion = "esp32-0.3.1";
+constexpr const char* kFirmwareVersion = "esp32-0.3.2";
+constexpr size_t kMaxTelemetryBatch = 8;
 
 struct GasSignal {
   bool valid = false;
@@ -36,3 +38,7 @@ struct TelemetrySample {
 char* encodeTelemetry(const TelemetrySample& sample, const char* deviceId,
                       const char* bootId, uint64_t bootCounter, uint64_t sentUptimeMs);
 bool telemetryAcknowledged(const char* response, const char* bootId, uint64_t sequence);
+char* encodeTelemetryBatch(const TelemetrySample* samples, size_t count, const char* deviceId,
+                           const char* bootId, uint64_t bootCounter, uint64_t sentUptimeMs);
+bool telemetryBatchAcknowledged(const char* response, const char* bootId,
+                                const TelemetrySample* samples, size_t count);

@@ -10,12 +10,30 @@
       "destination": "https://iotgasmonitor-production.up.railway.app/api/:path*"
     },
     {
+      "source": "/socket.io/",
+      "destination": "https://iotgasmonitor-production.up.railway.app/socket.io/"
+    },
+    {
+      "source": "/socket.io",
+      "destination": "https://iotgasmonitor-production.up.railway.app/socket.io/"
+    },
+    {
       "source": "/socket.io/:path*",
       "destination": "https://iotgasmonitor-production.up.railway.app/socket.io/:path*"
     },
     {
       "source": "/(.*)",
       "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/socket.io",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    },
+    {
+      "source": "/socket.io/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
     }
   ]
 }
