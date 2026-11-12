@@ -12,7 +12,13 @@ import { listDevices } from './telemetry.js';
 import { escapeTelegramHtml as html, telegramTime } from './telegram-message.js';
 import { telegramAdvancedScreen } from './telegram-advanced-view.js';
 export type { BotView, BotAction, BotButton, BotScreen } from './telegram-ui.js';
-import { button, type BotView, type BotScreen, type BotButton } from './telegram-ui.js';
+import {
+  button,
+  type BotView,
+  type BotScreen,
+  type BotButton,
+  selectedLabel,
+} from './telegram-ui.js';
 const back = [button('⬅️ Quay lại', 'menu')];
 const levels: Record<string, string> = {
   normal: 'Bình thường',
@@ -182,12 +188,8 @@ export async function telegramBotScreen(
       rows: [[button('🔄 Làm mới', 'status'), button('📱 Chọn thiết bị', 'devices')], back],
     };
   }
-  const picker = view.screen === 'history-devices';
-  const deviceView = (page: number): BotView => ({
-    ...view,
-    screen: picker ? 'history-devices' : 'devices',
-    page,
-  });
+  if (view.screen === 'history-devices') return historyDevicePicker(db, view);
+  const deviceView = (page: number): BotView => ({ screen: 'devices', page });
   const count = await db.device.count({ where: { archivedAt: null } });
   const page = Math.min(Math.max(view.page ?? 0, 0), Math.max(0, Math.ceil(count / 5) - 1));
   const devices = await listDevices(db, 'false', undefined, { skip: page * 5, take: 5 });
@@ -200,31 +202,55 @@ export async function telegramBotScreen(
   ];
   if (!count) text.push('Chưa có thiết bị.');
   const rows = devices.map((device) => [
-    button(
-      device.name.replace(/\s+/g, ' ').slice(0, 60),
-      picker ? 'history' : 'status',
-      picker
-        ? { view: { ...view, screen: 'history', deviceId: device.id, page: 0 } }
-        : { deviceId: device.id },
-    ),
+    button(device.name.replace(/\s+/g, ' ').slice(0, 60), 'status', { deviceId: device.id }),
   ]);
   const paging: BotButton[] = [];
   if (page > 0) paging.push(button('◀️ Trước', 'devices', { view: deviceView(page - 1) }));
   if ((page + 1) * 5 < count)
     paging.push(button('Sau ▶️', 'devices', { view: deviceView(page + 1) }));
   if (paging.length) rows.push(paging);
-  rows.push(
-    [button('🔄 Làm mới', picker ? 'history-devices' : 'devices', { view: deviceView(page) })],
-    picker
-      ? [
-          button('Tất cả thiết bị', 'history', {
-            view: { ...view, screen: 'history', deviceId: undefined, page: 0 },
-          }),
-          button('⬅️ Quay lại', 'history', { view: { ...view, screen: 'history', page: 0 } }),
-        ]
-      : back,
-  );
+  rows.push([button('🔄 Làm mới', 'devices', { view: deviceView(page) })], back);
   return { text: text.join('\n'), rows };
+}
+
+async function historyDevicePicker(db: Database, view: BotView): Promise<BotScreen> {
+  const page = view.page ?? 0;
+  const devices = await db.device.findMany({
+    where: { archivedAt: null },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip: page * 5,
+    take: 6,
+    select: { id: true, name: true },
+  });
+  const rows = devices
+    .slice(0, 5)
+    .map((d) => [
+      button(
+        selectedLabel(d.name.replace(/\s+/g, ' ').slice(0, 60), view.deviceId === d.id),
+        'history',
+        { view: { ...view, screen: 'history', deviceId: d.id, page: 0, returnPage: undefined } },
+      ),
+    ]);
+  const paging: BotButton[] = [];
+  if (page > 0)
+    paging.push(button('◀️ Trước', 'history-devices', { view: { ...view, page: page - 1 } }));
+  if (devices.length > 5)
+    paging.push(button('Sau ▶️', 'history-devices', { view: { ...view, page: page + 1 } }));
+  if (paging.length) rows.push(paging);
+  rows.push(
+    [
+      button(selectedLabel('Tất cả thiết bị', !view.deviceId), 'history', {
+        view: { ...view, screen: 'history', deviceId: undefined, page: 0, returnPage: undefined },
+      }),
+    ],
+    [
+      button('⬅️ Quay lại', 'history', {
+        view: { ...view, screen: 'history', page: view.returnPage ?? 0, returnPage: undefined },
+      }),
+      button('🏠 Trang chủ', 'menu'),
+    ],
+  );
+  return { text: `📱 <b>Lọc thiết bị</b>${!devices.length ? '\nChưa có thiết bị.' : ''}`, rows };
 }
 
 const causeLabel: Record<string, string> = { gas: 'Khí gas', co: 'CO', flame: 'Lửa' };
@@ -243,6 +269,151 @@ function incidentPhase(i: IncidentRow) {
     : i.acknowledgement
       ? 'ACKNOWLEDGED · Đã xem, chưa kết thúc'
       : 'ACTIVE · Đang diễn ra';
+}
+function historyPhase(i: IncidentRow) {
+  return i.status === 'ended'
+    ? 'Đã kết thúc'
+    : i.acknowledgement
+      ? 'Đã xem · Chưa kết thúc'
+      : 'Đang diễn ra';
+}
+export function historyPeriod(start: Date | null, end: Date | null) {
+  if (!start) return end ? `Kết thúc ${telegramTime(end)}` : 'Chưa xác định thời gian';
+  const a = telegramTime(start),
+    b = end ? telegramTime(end) : null;
+  if (!b) return `${a.slice(11)} · ${a.slice(0, 10)}`;
+  if (a.slice(0, 10) !== b.slice(0, 10))
+    return `${a.slice(11)} ${a.slice(0, 10)} → ${b.slice(11)} ${b.slice(0, 10)}`;
+  return `${a.slice(11)}${a.slice(11) !== b.slice(11) ? `–${b.slice(11)}` : ''} · ${a.slice(0, 10)}`;
+}
+function historyDetail(
+  i: IncidentRow,
+  connection: TelegramConnection & { user: User | null },
+  view: BotView,
+  parent: BotView,
+): BotScreen {
+  const current = incidentPresentation(i).currentSeverity;
+  const level = i.status === 'ended' ? i.severity : current;
+  const levelText =
+    level === 'critical'
+      ? '🔴 Nguy hiểm'
+      : level === 'warning'
+        ? '🟠 Cảnh báo'
+        : '⚠️ Chưa xác định';
+  const text = [
+    '📋 <b>Chi tiết sự cố</b>',
+    `📟 <b>${html(i.device.name)}</b>${i.device.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''}`,
+    `Sự cố: <b>${causeLabel[i.condition] ?? 'Cảm biến'}</b>`,
+    `Mức độ: <b>${levelText}</b>`,
+    ...(i.status === 'active' && current !== i.severity
+      ? [`Mức cao nhất: ${i.severity === 'critical' ? 'Nguy hiểm' : 'Cảnh báo'}`]
+      : []),
+    `Trạng thái: <b>${historyPhase(i)}</b>`,
+    `Bắt đầu: ${telegramTime(i.startedAt)}`,
+    ...(i.status === 'ended' ? [`Kết thúc: ${telegramTime(i.endedAt)}`] : []),
+  ];
+  if (i.startedAt && i.endedAt && i.endedAt >= i.startedAt) {
+    const seconds = Math.floor((i.endedAt.getTime() - i.startedAt.getTime()) / 1000);
+    const duration =
+      seconds >= 86400
+        ? `${Math.floor(seconds / 86400)} ngày ${Math.floor((seconds % 86400) / 3600)} giờ`
+        : seconds >= 3600
+          ? `${Math.floor(seconds / 3600)} giờ ${Math.floor((seconds % 3600) / 60)} phút`
+          : seconds >= 60
+            ? `${Math.floor(seconds / 60)} phút ${seconds % 60} giây`
+            : seconds
+              ? `${seconds} giây`
+              : 'Dưới 1 giây';
+    text.push(`Thời lượng: ${duration}`);
+  }
+  if (i.status === 'active' && i.device.connectivity === 'offline')
+    text.push('📡 Thiết bị mất kết nối');
+  if (i.acknowledgement) text.push(`Đã xem: ${telegramTime(i.acknowledgement.acknowledgedAt)}`);
+  const rows: BotButton[][] = [];
+  if (
+    !i.acknowledgement &&
+    connection.user &&
+    ['admin', 'operator'].includes(connection.user.role)
+  ) {
+    rows.push([button('✅ Xác nhận đã đọc', 'incident', { view, ackIncidentId: i.id })]);
+    if (i.status === 'active') text.push('Xác nhận không kết thúc sự cố hoặc tắt còi.');
+  }
+  rows.push(
+    [
+      button('⬅️ Quay lại', 'history', { view: parent }),
+      button('🔄 Làm mới', 'incident', { view }),
+    ],
+    [button('🏠 Trang chủ', 'menu')],
+  );
+  return { text: text.join('\n'), rows };
+}
+async function compactHistory(
+  db: Database,
+  incidents: IncidentRow[],
+  view: BotView,
+  hasMore: boolean,
+): Promise<BotScreen> {
+  const days = view.days ?? 1,
+    page = view.page ?? 0;
+  const name = view.deviceId
+    ? (incidents[0]?.device ??
+      (await db.device.findFirst({
+        where: { id: view.deviceId, archivedAt: null },
+        select: { name: true, sourceKind: true },
+      })))
+    : null;
+  const text = [
+    '📋 <b>Lịch sử cảnh báo</b>',
+    `📟 ${view.deviceId ? (name ? html(name.name) : 'Thiết bị không khả dụng') : 'Tất cả thiết bị'}${name?.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''} · ${days === 1 ? '24 giờ' : `${days} ngày`}`,
+    ...(view.severity ? [`Mức cao nhất: ${view.severity.toUpperCase()}`] : []),
+  ];
+  const rows: BotButton[][] = [];
+  incidents.forEach((i, index) => {
+    const current = incidentPresentation(i).currentSeverity;
+    text.push(
+      `\n${index + 1}. ${incidentLevel(i).split(' ')[0]} <b>${view.deviceId ? '' : `${html(i.device.name)} · `}${causeLabel[i.condition] ?? 'Cảm biến'}</b> — ${historyPhase(i)}`,
+      historyPeriod(i.startedAt, i.endedAt),
+    );
+    if (i.status === 'active' && current !== i.severity)
+      text.push(`Cao nhất: ${i.severity.toUpperCase()}`);
+    if (index % 2 === 0) rows.push([]);
+    rows.at(-1)!.push(
+      button(`Chi tiết #${index + 1}`, 'incident', {
+        view: { ...view, screen: 'incident', incidentId: i.id, returnTo: 'history' },
+      }),
+    );
+  });
+  if (!incidents.length) text.push('\nKhông có sự cố trong khoảng đã chọn.');
+  if (page > 0 || hasMore) text.push(`\nTrang ${page + 1}`);
+  rows.push(
+    ([1, 7, 30] as const).map((value) =>
+      button(selectedLabel(value === 1 ? '24 giờ' : `${value} ngày`, days === value), 'history', {
+        view: { ...view, days: value, page: 0 },
+      }),
+    ),
+    [
+      button(selectedLabel('Tất cả', !view.severity), 'history', {
+        view: { ...view, severity: undefined, page: 0 },
+      }),
+      button(selectedLabel('🟠 WARNING', view.severity === 'warning'), 'history', {
+        view: { ...view, severity: 'warning', page: 0 },
+      }),
+      button(selectedLabel('🔴 CRITICAL', view.severity === 'critical'), 'history', {
+        view: { ...view, severity: 'critical', page: 0 },
+      }),
+    ],
+    [
+      button('📱 Lọc thiết bị', 'history-devices', {
+        view: { ...view, screen: 'history-devices', page: 0, returnPage: page },
+      }),
+    ],
+  );
+  const paging: BotButton[] = [];
+  if (page > 0) paging.push(button('◀️ Trước', 'history', { view: { ...view, page: page - 1 } }));
+  if (hasMore) paging.push(button('Sau ▶️', 'history', { view: { ...view, page: page + 1 } }));
+  if (paging.length) rows.push(paging);
+  rows.push([button('🔄 Làm mới', 'history', { view }), button('🏠 Trang chủ', 'menu')]);
+  return { text: text.join('\n'), rows };
 }
 async function telegramIncidentScreen(
   db: Database,
@@ -267,6 +438,7 @@ async function telegramIncidentScreen(
         text: 'Sự cố không khả dụng.',
         rows: [[button('⬅️ Quay lại', parent.screen, { view: parent })]],
       };
+    if (view.returnTo === 'history') return historyDetail(incident, connection, view, parent);
     const current = incidentPresentation(incident).currentSeverity;
     const text = [
       `<b>${incidentLevel(incident)}</b>`,
@@ -320,6 +492,7 @@ async function telegramIncidentScreen(
     visibleOnly: true,
     activityWindow: history,
   });
+  if (history) return compactHistory(db, result.rows, view, result.hasMore);
   const text = [
     history
       ? `📋 <b>Lịch sử cảnh báo · ${days === 1 ? '24 giờ' : `${days} ngày`}</b>`
@@ -361,25 +534,6 @@ async function telegramIncidentScreen(
       },
     ),
   ]);
-  if (history) {
-    rows.push(
-      ([1, 7, 30] as const).map((days) =>
-        button(days === 1 ? '24 giờ' : `${days} ngày`, 'history', {
-          view: { ...view, days, page: 0 },
-        }),
-      ),
-    );
-    rows.push([
-      button('Tất cả mức', 'history', { view: { ...view, severity: undefined, page: 0 } }),
-      button('🟠 WARNING', 'history', { view: { ...view, severity: 'warning', page: 0 } }),
-      button('🔴 CRITICAL', 'history', { view: { ...view, severity: 'critical', page: 0 } }),
-    ]);
-    rows.push([
-      button('📱 Lọc thiết bị', 'history-devices', {
-        view: { ...view, screen: 'history-devices', page: 0 },
-      }),
-    ]);
-  }
   const paging: BotButton[] = [];
   if (page > 0) paging.push(button('◀️ Trước', view.screen, { view: { ...view, page: page - 1 } }));
   if (result.hasMore)

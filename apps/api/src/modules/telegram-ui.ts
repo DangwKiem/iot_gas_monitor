@@ -25,6 +25,8 @@ export type BotView = {
   returnTo?: 'alerts' | 'history';
   metric?: ChartMetric;
   hours?: 1 | 24 | 168;
+  chartMode?: 'simple' | 'detailed';
+  returnPage?: number;
 };
 export type BotAction = {
   view: BotView;
@@ -48,3 +50,4 @@ export const button = (
   screen: BotView['screen'],
   extra: Partial<BotAction> = {},
 ): BotButton => ({ text, action: { view: { screen }, ...extra } });
+export const selectedLabel = (text: string, selected: boolean) => (selected ? `✓ ${text}` : text);

@@ -1,9 +1,15 @@
 import type { Database } from '@iot/database';
 import type { TelegramConnection, User } from '@prisma/client';
-import { button, type BotView, type BotScreen, type BotButton } from './telegram-ui.js';
+import {
+  button,
+  type BotView,
+  type BotScreen,
+  type BotButton,
+  selectedLabel,
+} from './telegram-ui.js';
 import { chartMetrics, telegramChartData, telegramReport, reportRange } from './telegram-data.js';
 import { renderTelegramChart } from './telegram-chart.js';
-import { escapeTelegramHtml as html, telegramTime } from './telegram-message.js';
+import { escapeTelegramHtml as html } from './telegram-message.js';
 import { ApiError } from '../lib/errors.js';
 
 const home: BotButton[] = [{ text: '🏠 Trang chủ', action: { view: { screen: 'menu' } } }];
@@ -22,9 +28,10 @@ export async function telegramAdvancedScreen(
 ): Promise<BotScreen> {
   if (!c.user?.active || !['admin', 'operator', 'viewer'].includes(c.user.role))
     return { text: 'Bạn không có quyền truy cập.', rows: [home] };
-  const tracked = c.trackedDeviceId
-    ? await db.device.findFirst({ where: { id: c.trackedDeviceId, archivedAt: null } })
-    : null;
+  const tracked =
+    view.screen === 'settings' && c.trackedDeviceId
+      ? await db.device.findFirst({ where: { id: c.trackedDeviceId, archivedAt: null } })
+      : null;
   if (view.screen === 'settings')
     return {
       text: [
@@ -139,14 +146,16 @@ export async function telegramAdvancedScreen(
             : { view: { screen: 'report', days: view.days ?? 1 } },
         ),
       ]);
-    rows.push(
-      [
-        button('⬅️ Quay lại', target === 'settings' ? 'settings' : target, {
-          view: target === 'chart' ? { screen: 'menu' } : { ...view, screen: target, page: 0 },
-        }),
-      ],
-      home,
-    );
+    if (target === 'chart' && !view.deviceId && !c.selectedDeviceId) rows.push(home);
+    else
+      rows.push(
+        [
+          button('⬅️ Quay lại', target === 'settings' ? 'settings' : target, {
+            view: { ...view, screen: target, page: 0 },
+          }),
+        ],
+        home,
+      );
     return { text: `📱 <b>Chọn thiết bị</b>${!devices.length ? '\nChưa có thiết bị.' : ''}`, rows };
   }
   if (view.screen === 'report') {
@@ -170,46 +179,57 @@ export async function telegramAdvancedScreen(
   }
   const deviceId = view.deviceId ?? c.selectedDeviceId!;
   const device = await db.device.findFirst({ where: { id: deviceId, archivedAt: null } });
-  const metric = view.metric,
-    hours = view.hours ?? 1;
-  const rows: BotButton[][] = Object.entries(chartMetrics).map(([metric, label]) => [
-    button(label.name, 'chart', {
-      view: { screen: 'chart', deviceId, metric: metric as keyof typeof chartMetrics, hours },
-    }),
-  ]);
-  rows.push(
-    ([1, 24, 168] as const).map((hours) =>
-      button(hours === 1 ? '1 giờ' : hours === 24 ? '24 giờ' : '7 ngày', 'chart', {
-        view: { ...view, screen: 'chart', deviceId, hours },
-      }),
-    ),
-  );
-  rows.push(
-    [
-      button('📱 Đổi thiết bị', 'chart-devices', {
-        view: { ...view, screen: 'chart-devices', page: 0 },
-      }),
-      button('🔄 Làm mới', 'chart', { view: { ...view, deviceId } }),
-    ],
-    [
-      button('⬅️ Quay lại', metric ? 'chart' : 'chart-devices', {
-        view: metric ? { screen: 'chart', deviceId, hours } : { screen: 'chart-devices', page: 0 },
-      }),
-    ],
-    home,
-  );
   if (!device)
     return {
       text: 'Thiết bị không khả dụng.',
       rows: [[button('📱 Chọn thiết bị', 'chart-devices')], home],
     };
-  let text = `📈 <b>${html(device.name)}</b>${device.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''}`;
-  if (!metric) return { text: `${text}\nChọn cảm biến.`, rows };
+  const metric = view.metric,
+    hours = view.hours ?? 1,
+    chartMode = view.chartMode ?? 'simple';
+  const chartView: BotView = { screen: 'chart', deviceId, metric, hours, chartMode };
+  const sensorButton = (key: keyof typeof chartMetrics, label: string) =>
+    button(selectedLabel(label, metric === key), 'chart', { view: { ...chartView, metric: key } });
+  const rows: BotButton[][] = [
+    [sensorButton('mq2_adc', 'MQ-2'), sensorButton('mq7_adc', 'MQ-7')],
+    [sensorButton('temperature_c', '🌡 Nhiệt độ'), sensorButton('humidity_pct', '💧 Độ ẩm')],
+    [sensorButton('flame', '🔥 Lửa')],
+    ([1, 24, 168] as const).map((value) =>
+      button(selectedLabel(value === 168 ? '7 ngày' : `${value} giờ`, hours === value), 'chart', {
+        view: { ...chartView, hours: value },
+      }),
+    ),
+    [
+      button(selectedLabel('Đơn giản', chartMode === 'simple'), 'chart', {
+        view: { ...chartView, chartMode: 'simple' },
+      }),
+      button(selectedLabel('Chi tiết', chartMode === 'detailed'), 'chart', {
+        view: { ...chartView, chartMode: 'detailed' },
+      }),
+    ],
+    [
+      button('📱 Đổi thiết bị', 'chart-devices', {
+        view: { ...chartView, screen: 'chart-devices', page: 0 },
+      }),
+      button('🔄 Làm mới', 'chart', { view: chartView }),
+    ],
+    home,
+  ];
+  const text = [
+    '📈 <b>Biểu đồ cảm biến</b>',
+    `📟 <b>${html(device.name)}</b>${device.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''}`,
+    `Cảm biến: <b>${metric ? chartMetrics[metric].name : 'Chưa chọn'}</b>`,
+    `Khoảng thời gian: <b>${hours === 168 ? '7 ngày' : `${hours} giờ`}</b>`,
+  ].join('\n');
+  if (!metric) return { text, rows };
   try {
     const data = await telegramChartData(db, deviceId, metric, hours, now);
-    const photo = await renderTelegramChart(data);
-    text += `\n${chartMetrics[metric].name} · ${hours === 168 ? '7 ngày' : `${hours} giờ`}\n${telegramTime(data.from)} → ${telegramTime(data.to)}${!photo ? '\nChưa có dữ liệu hợp lệ.' : ''}`;
-    return { text, rows, ...(photo ? { photo } : {}) };
+    const photo = await renderTelegramChart(data, chartMode);
+    return {
+      text: photo ? text : `${text}\nChưa có dữ liệu hợp lệ.`,
+      rows,
+      ...(photo ? { photo } : {}),
+    };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
     return {

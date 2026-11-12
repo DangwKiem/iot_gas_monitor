@@ -58,6 +58,8 @@ const viewSchema = z.object({
   page: z.number().int().min(0).max(1000000).optional(),
   metric: z.enum(['mq2_adc', 'mq7_adc', 'flame', 'temperature_c', 'humidity_pct']).optional(),
   hours: z.union([z.literal(1), z.literal(24), z.literal(168)]).optional(),
+  chartMode: z.enum(['simple', 'detailed']).optional(),
+  returnPage: z.number().int().min(0).max(1000000).optional(),
   days: z.union([z.literal(1), z.literal(7), z.literal(30)]).optional(),
   severity: z.enum(['warning', 'critical']).optional(),
   deviceId: z.uuid().optional(),

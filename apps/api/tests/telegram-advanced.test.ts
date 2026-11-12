@@ -22,6 +22,7 @@ import { telegramNotifier, deliverTelegramNotification } from '../src/modules/no
 import { processTelegramUpdate, type BotApi } from '../src/modules/telegram-bot.js';
 import { unlinkTelegram } from '../src/modules/telegram-links.js';
 import { TelegramApiError } from '../src/modules/telegram-client.js';
+import { telegramBotScreen } from '../src/modules/telegram-bot-view.js';
 
 it('schedules daily and weekly reports strictly in the future in Vietnam time', () => {
   const now = new Date('2026-11-12T01:30:00Z');
@@ -84,7 +85,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram advanced integration',
   };
   const click = async (text: string, data?: string) => {
     clock += 6000;
-    const callback_data = data ?? buttons().find((b) => b.text === text)?.callback_data;
+    const callback_data =
+      data ?? buttons().find((b) => b.text.replace(/^✓ /, '') === text)?.callback_data;
     if (!callback_data) throw new Error(`Missing button: ${text}`);
     await processTelegramUpdate(
       db,
@@ -335,15 +337,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram advanced integration',
   it('sends then edits chart photos and retries failed upload without replaying actions', async () => {
     clock = (await readings()).getTime();
     await command('/chart');
-    await click('Nhiệt độ');
+    await click('🌡 Nhiệt độ');
     // Include the completed previous hour even if the current minute advanced.
     await click('24 giờ');
     expect(calls.filter((c) => c.method === 'sendPhoto')).toHaveLength(1);
     expect(calls.some((c) => c.method === 'editMessageMedia')).toBe(true);
-    await click('⬅️ Quay lại');
-    expect(screen().text).toContain('Chọn cảm biến.');
+    expect(buttons().some((b) => b.text === '✓ 🌡 Nhiệt độ')).toBe(true);
     await command('/chart');
-    await click('Nhiệt độ');
+    await click('🌡 Nhiệt độ');
     expect(calls.filter((c) => c.method === 'sendPhoto')).toHaveLength(2);
     await click('🏠 Trang chủ');
     await command('/settings');
@@ -369,7 +370,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram advanced integration',
   it('retries photo transport without duplicating the text anchor', async () => {
     clock = (await readings()).getTime();
     await command('/chart');
-    const cb = buttons().find((b) => b.text === 'Nhiệt độ')!.callback_data;
+    const cb = buttons().find((b) => b.text.replace(/^✓ /, '') === '🌡 Nhiệt độ')!.callback_data;
     failPhoto = true;
     clock += 6000;
     const update = {
@@ -389,6 +390,173 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram advanced integration',
     expect(
       (await db.telegramConnection.findUniqueOrThrow({ where: { telegramUserId: tg } })).pending,
     ).toBe(false);
+  });
+  it('keeps chart controls compact and preserves every sensor, period and display mode', async () => {
+    clock = (await readings()).getTime();
+    await command('/chart');
+    const keyboard = () =>
+      (screen().reply_markup as { inline_keyboard: { text: string }[][] }).inline_keyboard;
+    expect(keyboard().map((row) => row.length)).toEqual([2, 2, 1, 3, 2, 2, 1]);
+    expect(keyboard()[0]!.map((b) => b.text)).toEqual(['MQ-2', 'MQ-7']);
+    expect(keyboard()[1]!.map((b) => b.text)).toEqual(['🌡 Nhiệt độ', '💧 Độ ẩm']);
+    const sensors = [
+      ['MQ-2', 'mq2_adc'],
+      ['MQ-7', 'mq7_adc'],
+      ['🌡 Nhiệt độ', 'temperature_c'],
+      ['💧 Độ ẩm', 'humidity_pct'],
+      ['🔥 Lửa', 'flame'],
+    ] as const;
+    for (const [label, metric] of sensors) {
+      await click(label);
+      expect(buttons().some((b) => b.text === `✓ ${label}`)).toBe(true);
+      for (const [period, hours] of [
+        ['1 giờ', 1],
+        ['24 giờ', 24],
+        ['7 ngày', 168],
+      ] as const) {
+        await click(period);
+        for (const [label, chartMode] of [
+          ['Đơn giản', 'simple'],
+          ['Chi tiết', 'detailed'],
+        ] as const) {
+          await click(label);
+          expect(buttons().some((b) => b.text === `✓ ${period}`)).toBe(true);
+          expect(buttons().some((b) => b.text === `✓ ${label}`)).toBe(true);
+          const connection = await db.telegramConnection.findUniqueOrThrow({
+            where: { telegramUserId: tg },
+          });
+          expect(connection.view).toMatchObject({ screen: 'chart', metric, hours, chartMode });
+        }
+      }
+    }
+    expect(calls.filter((c) => c.method === 'sendPhoto')).toHaveLength(1);
+    expect(calls.filter((c) => c.method === 'sendMessage')).toHaveLength(1);
+    await click('📱 Đổi thiết bị');
+    await click('⬅️ Quay lại');
+    expect(buttons().some((b) => b.text === '✓ Chi tiết')).toBe(true);
+    expect(buttons().some((b) => b.text === '✓ 7 ngày')).toBe(true);
+  });
+  it('shows a concise empty chart state and keeps mode changes functional', async () => {
+    await command('/chart');
+    await click('MQ-2');
+    expect(screen().text).toContain('Chưa có dữ liệu hợp lệ.');
+    await click('Chi tiết');
+    await click('7 ngày');
+    expect(buttons().some((b) => b.text === '✓ Chi tiết')).toBe(true);
+    expect(buttons().some((b) => b.text === '✓ 7 ngày')).toBe(true);
+    expect(calls.some((c) => c.method === 'sendPhoto')).toBe(false);
+  });
+  it('keeps same-minute incidents distinct, binds numbered details to IDs and returns to the same filtered page', async () => {
+    const time = new Date('2026-11-12T13:48:00Z');
+    const user = await db.user.findUniqueOrThrow({ where: { id: userId } });
+    const connection = {
+      ...(await db.telegramConnection.findUniqueOrThrow({ where: { telegramUserId: tg } })),
+      user,
+    };
+    await db.device.update({ where: { id: f.deviceId }, data: { name: 'Bếp <A&B>' } });
+    const incidents = await db.alertIncident.createManyAndReturn({
+      data: Array.from({ length: 7 }, () => ({
+        deviceId: f.deviceId,
+        condition: 'flame',
+        severity: 'critical',
+        origin: 'event',
+        status: 'ended',
+        startedAt: time,
+        endedAt: new Date(time.getTime() + 20000),
+      })),
+    });
+    const view = {
+      screen: 'history' as const,
+      deviceId: f.deviceId,
+      days: 1 as const,
+      severity: 'critical' as const,
+      page: 0,
+    };
+    const first = await telegramBotScreen(db, connection, view, new Date('2026-11-12T14:00:00Z'));
+    expect(first.text.match(/Đã kết thúc/g) ?? []).toHaveLength(5);
+    expect(first.text.match(/Bếp &lt;A&amp;B&gt;/g) ?? []).toHaveLength(1);
+    expect(first.text).not.toMatch(/RESOLVED|T13:|uuid/);
+    expect(first.text).toContain('20:48 · 12/11/2026');
+    const details = first.rows.flat().filter((b) => b.text.startsWith('Chi tiết #'));
+    expect(details.map((b) => b.text)).toEqual([
+      'Chi tiết #1',
+      'Chi tiết #2',
+      'Chi tiết #3',
+      'Chi tiết #4',
+      'Chi tiết #5',
+    ]);
+    expect(new Set(details.map((b) => b.action.view.incidentId)).size).toBe(5);
+    for (const b of details) expect(incidents.map((i) => i.id)).toContain(b.action.view.incidentId);
+    expect(first.rows.slice(0, 3).map((row) => row.length)).toEqual([2, 2, 1]);
+    expect(first.rows.flat().some((b) => b.text === '✓ 🔴 CRITICAL')).toBe(true);
+    expect(first.rows.flat().some((b) => b.text === '◀️ Trước')).toBe(false);
+    const next = first.rows.flat().find((b) => b.text === 'Sau ▶️')!.action.view;
+    const second = await telegramBotScreen(db, connection, next, new Date('2026-11-12T14:00:00Z'));
+    expect(second.text).toContain('Trang 2');
+    expect(second.rows.flat().some((b) => b.text === 'Sau ▶️')).toBe(false);
+    const secondIds = second.rows
+      .flat()
+      .filter((b) => b.text.startsWith('Chi tiết #'))
+      .map((b) => b.action.view.incidentId);
+    expect(secondIds).toHaveLength(2);
+    expect(secondIds.some((id) => details.some((b) => b.action.view.incidentId === id))).toBe(
+      false,
+    );
+    const detailView = second.rows.flat().find((b) => b.text === 'Chi tiết #2')!.action.view;
+    const detail = await telegramBotScreen(
+      db,
+      connection,
+      detailView,
+      new Date('2026-11-12T14:00:00Z'),
+    );
+    expect(detail.text).toContain('Thời lượng: 20 giây');
+    expect(detail.text).toContain('Nguy hiểm');
+    expect(detail.text).not.toContain('RESOLVED');
+    const back = detail.rows.flat().find((b) => b.text === '⬅️ Quay lại')!.action.view;
+    expect(back).toMatchObject({ ...view, page: 1 });
+    const restored = await telegramBotScreen(
+      db,
+      connection,
+      back,
+      new Date('2026-11-12T14:00:00Z'),
+    );
+    expect(
+      restored.rows
+        .flat()
+        .filter((b) => b.text.startsWith('Chi tiết #'))
+        .map((b) => b.action.view.incidentId),
+    ).toEqual(secondIds);
+    const pickerView = second.rows.flat().find((b) => b.text === '📱 Lọc thiết bị')!.action.view;
+    const picker = await telegramBotScreen(
+      db,
+      connection,
+      pickerView,
+      new Date('2026-11-12T14:00:00Z'),
+    );
+    expect(picker.rows.flat().find((b) => b.text === '⬅️ Quay lại')!.action.view).toMatchObject({
+      ...view,
+      page: 1,
+    });
+    const other = await db.device.create({ data: { name: 'Phòng khác', sourceKind: 'physical' } });
+    await db.alertIncident.create({
+      data: {
+        deviceId: other.id,
+        condition: 'co',
+        severity: 'warning',
+        origin: 'event',
+        status: 'ended',
+        startedAt: time,
+        endedAt: time,
+      },
+    });
+    const all = await telegramBotScreen(
+      db,
+      connection,
+      { screen: 'history' },
+      new Date('2026-11-12T14:00:00Z'),
+    );
+    expect(all.text).toContain('Phòng khác · CO');
+    expect(all.text).toContain('Bếp &lt;A&amp;B&gt; · Lửa');
   });
   it('deduplicates concurrent schedulers and sends only one report across worker restart', async () => {
     const due = new Date(Date.now() - 1000);

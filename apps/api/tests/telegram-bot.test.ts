@@ -62,7 +62,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram interactive bot + Post
       screen().reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }
     ).inline_keyboard.flat();
   const click = async (label: string, data?: string) => {
-    const b = buttons().find((b) => b.text === label);
+    const b = buttons().find((b) => b.text.replace(/^✓ /, '') === label);
     if (!b && !data) throw new Error(`Button missing: ${label}`);
     clock += 1000;
     await processTelegramUpdate(
@@ -681,12 +681,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram interactive bot + Post
     expect(screen().text).toContain('Không có sự cố');
     await click('7 ngày');
     expect(screen().text).toContain('Khí gas');
-    expect(screen().text).not.toContain(' · CO');
+    expect(screen().text).not.toContain('<b>CO</b>');
     await click('🔴 CRITICAL');
     expect(screen().text).toContain('Không có sự cố');
     await click('30 ngày');
-    expect(screen().text).toContain(' · CO');
-    expect(screen().text).not.toContain(' · Khí gas');
+    expect(screen().text).toContain('<b>CO</b>');
+    expect(screen().text).not.toContain('<b>Khí gas</b>');
     await click('🟠 WARNING');
     expect(screen().text).toContain('Khí gas');
     await db.alertIncident.createMany({
@@ -705,7 +705,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('Telegram interactive bot + Post
     await click('Sau ▶️');
     expect(buttons().some((b) => b.text === '◀️ Trước')).toBe(true);
     await click('◀️ Trước');
-    await click('⬅️ Quay lại');
+    await click('🏠 Trang chủ');
     expect(buttons()).toHaveLength(7);
   });
   it('blocks alerts/history for unlinked and disabled accounts without reading incidents', async () => {
