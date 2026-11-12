@@ -1,3 +1,8 @@
+import {
+  configureTelegramPresentation,
+  verifyTelegramIcons,
+} from './modules/telegram-presentation.js';
+import { telegramRequest } from './modules/telegram-client.js';
 import pino from 'pino';
 import { createDatabase } from '@iot/database';
 import { parseConfig } from './config.js';
@@ -21,12 +26,22 @@ const log = pino({
     'p256dh',
   ],
 });
+configureTelegramPresentation(config.telegramPresentation, undefined, (code) =>
+  log.warn({ code }, 'telegram_presentation'),
+);
+const telegramToken = config.telegramBot?.token ?? config.telegram?.token;
+if (telegramToken)
+  void verifyTelegramIcons((ids) =>
+    telegramRequest(telegramToken, 'getCustomEmojiStickers', { custom_emoji_ids: ids }),
+  );
 const db = createDatabase(config.databaseUrl);
 await db.$connect();
 log.info(
   {
     telegram_enabled: !!config.telegram,
     telegram_bot_enabled: !!config.telegramBot,
+    telegram_custom_emoji_enabled: config.telegramPresentation.customEmojiEnabled,
+    telegram_button_styles_enabled: config.telegramPresentation.buttonStylesEnabled,
     include_simulators: config.telegram?.includeSimulators ?? false,
     web_push_enabled: !!config.webPush,
   },

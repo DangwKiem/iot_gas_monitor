@@ -1,3 +1,4 @@
+import { telegramIconHtml as icon } from './telegram-presentation.js';
 export type TelegramMessageInput = {
   deviceName: string;
   location?: string | null;
@@ -60,10 +61,10 @@ export function formatTelegramMessage(input: TelegramMessageInput): string {
   const escalation = !input.ended && critical && input.escalation;
   const reduced = !input.ended && !critical && input.severity === 'critical';
   const title = input.ended
-    ? '✅ <b>RESOLVED — ĐÃ KẾT THÚC</b>'
+    ? `${icon('resolved')} <b>RESOLVED — ĐÃ KẾT THÚC</b>`
     : critical
-      ? '🔴 <b>CRITICAL — NGUY HIỂM</b>'
-      : '🟠 <b>WARNING — CẢNH BÁO</b>';
+      ? `${icon('critical')} <b>CRITICAL — NGUY HIỂM</b>`
+      : `${icon('warning')} <b>WARNING — CẢNH BÁO</b>`;
   const timeLabel = input.ended ? 'Kết thúc' : escalation ? 'Tăng mức' : 'Thời gian';
   const time = input.ended
     ? input.endedAt
@@ -100,7 +101,9 @@ export function formatConnectivityMessage(input: {
   time: Date;
 }) {
   return [
-    input.online ? '🟢 <b>ONLINE — ĐÃ KẾT NỐI</b>' : '📡 <b>OFFLINE — MẤT KẾT NỐI</b>',
+    input.online
+      ? `${icon('online')} <b>ONLINE — ĐÃ KẾT NỐI</b>`
+      : `${icon('offline')} <b>OFFLINE — MẤT KẾT NỐI</b>`,
     ...(input.simulator ? ['🧪 <b>MÔ PHỎNG</b>'] : []),
     '',
     `📟 Thiết bị: <b>${field(input.deviceName)}</b>`,

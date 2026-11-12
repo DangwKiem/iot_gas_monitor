@@ -1,3 +1,4 @@
+import { telegramIconHtml as icon } from './telegram-presentation.js';
 import type { Database } from '@iot/database';
 import type { TelegramConnection, User } from '@prisma/client';
 import {
@@ -35,7 +36,7 @@ export async function telegramAdvancedScreen(
   if (view.screen === 'settings')
     return {
       text: [
-        '⚙️ <b>Cài đặt Telegram</b>',
+        `${icon('settings')} <b>Cài đặt Telegram</b>`,
         `Tài khoản: <b>${html(c.user.email)}</b>`,
         `Theo dõi: <b>${c.trackedDeviceId ? (tracked ? html(tracked.name) : 'Thiết bị không khả dụng') : 'Tất cả thiết bị'}</b>`,
         `WARNING: <b>${c.warningEnabled ? 'Bật' : 'Tắt'}</b>`,
@@ -57,7 +58,7 @@ export async function telegramAdvancedScreen(
       ],
     };
   if (view.screen === 'report-settings' || view.screen === 'report-time') {
-    const text = `📋 <b>Báo cáo định kỳ</b>\n${frequencyText[c.reportFrequency]} · ${timeText(c.reportMinute)} · Giờ Việt Nam${c.reportFrequency === 'weekly' ? `\n${['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'][c.reportWeekday]}` : ''}`;
+    const text = `${icon('report')} <b>Báo cáo định kỳ</b>\n${frequencyText[c.reportFrequency]} · ${timeText(c.reportMinute)} · Giờ Việt Nam${c.reportFrequency === 'weekly' ? `\n${['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'][c.reportWeekday]}` : ''}`;
     const rows: BotButton[][] = [];
     if (view.screen === 'report-settings') {
       rows.push([
@@ -156,7 +157,10 @@ export async function telegramAdvancedScreen(
         ],
         home,
       );
-    return { text: `📱 <b>Chọn thiết bị</b>${!devices.length ? '\nChưa có thiết bị.' : ''}`, rows };
+    return {
+      text: `${icon('devices')} <b>Chọn thiết bị</b>${!devices.length ? '\nChưa có thiết bị.' : ''}`,
+      rows,
+    };
   }
   if (view.screen === 'report') {
     const days = view.days ?? 1;
@@ -216,7 +220,7 @@ export async function telegramAdvancedScreen(
     home,
   ];
   const text = [
-    '📈 <b>Biểu đồ cảm biến</b>',
+    `${icon('chart')} <b>Biểu đồ cảm biến</b>`,
     `📟 <b>${html(device.name)}</b>${device.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''}`,
     `Cảm biến: <b>${metric ? chartMetrics[metric].name : 'Chưa chọn'}</b>`,
     `Khoảng thời gian: <b>${hours === 168 ? '7 ngày' : `${hours} giờ`}</b>`,

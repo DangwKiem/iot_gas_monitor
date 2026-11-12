@@ -176,3 +176,13 @@ Chạy `npm install`, `npm run db:generate`, `npm run db:migrate` để thêm sh
 - `/settings`: xem tài khoản, theo dõi một/tất cả thiết bị, WARNING và lịch báo cáo. Lịch mặc định tắt; có hằng ngày/tuần, ngày trong tuần, giờ và phút 00/15/30/45, theo giờ Việt Nam. Critical thiết bị thật luôn được nhận, không có chức năng tắt còi. Kiểm tra thông báo tối đa một job/phút.
 - Worker backend tự tổng hợp ngày/7 ngày đã hoàn tất trước ngày gửi; không cần scheduler OS. Bảo vệ bằng DB locks/unique event-key, retry tối đa 8 lần/backoff/429, báo cáo TTL 48 giờ. Hủy liên kết/đổi quyền/hủy lịch/restore chặn job cũ. Telegram vẫn có giới hạn at-least-once khi mất HTTP ACK.
 - Cảnh báo cá nhân dùng cùng incident/presence hiện có. Kênh global trùng chat liên kết được route tới cá nhân để cài đặt WARNING có hiệu lực và tránh trùng; các group/channel khác không đổi. Truy vấn biểu đồ/báo cáo giới hạn 5 giây/tài khoản.
+
+## Icon Telegram
+
+Bot dùng HTTPS JSON trực tiếp tới `api.telegram.org`, không phụ thuộc SDK Telegram. Inline button icon/style có từ Bot API 9.4; cloud API công bố 10.4 tại thời điểm kiểm tra. Custom Emoji cần bot có username Fragment hoặc chủ bot có Premium khi gửi trực tiếp vào private/group/supergroup. Tham khảo [Bot API](https://core.telegram.org/bots/api#inlinekeyboardbutton).
+
+- `TELEGRAM_CUSTOM_EMOJI_ENABLED=true` bật Custom Emoji; mặc định false. `TELEGRAM_BUTTON_STYLES_ENABLED=false` tắt màu nút nếu muốn; mặc định true. Khởi động lại backend sau khi đổi cấu hình.
+- Ánh xạ tên icon → ID ở `apps/api/src/config/telegram-icons.json`, chọn từ [TgAndroidIcons](https://t.me/addemoji/TgAndroidIcons). Bộ mặc định có 13 ID đã xác minh bằng `getCustomEmojiStickers`, không dùng ID mẫu. Thay ID trong file rồi khởi động lại, không sửa callback hoặc logic.
+- Trước khi dùng, backend xác minh loại custom_emoji và ID thật qua Telegram; metadata cache 1 giờ, lỗi tra cứu chờ 5 phút rồi thử lại. ID thiếu/sai/không còn tồn tại giữ Unicode. Nội dung HTML dùng `tg-emoji` với Unicode dự phòng; nút dùng `icon_custom_emoji_id` và vẫn có nhãn chữ. Icon chỉ nằm ở tiêu đề và nút điều hướng chính; mức cảnh báo giữ emoji màu hiện có.
+- Nếu Telegram trả lỗi rõ ràng về Custom Emoji/quyền/style/HTML emoji, chỉ thử lại một lần với Unicode và màu nút mặc định, rồi giữ fallback cho chat đó 1 giờ. Không thử lại do icon khi timeout, 429, 5xx hoặc bị chặn thông thường; queue/retry hiện có tiếp tục xử lý. Không ghi token, response gốc hoặc chat ID vào log; log fallback chỉ có mã lỗi.
+- Home dùng primary, xác nhận đã đọc dùng success, xác nhận hủy liên kết dùng danger. Các nút khác giữ màu mặc định; ACK vẫn không kết thúc sự cố hoặc tắt còi. Client cũ có thể không vẽ icon mới, nhưng nhãn chữ và callback vẫn hoạt động.

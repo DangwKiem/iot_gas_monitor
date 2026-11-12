@@ -1,3 +1,4 @@
+import { telegramButtonPresentation, telegramIconHtml } from './telegram-presentation.js';
 import { nextReportTime } from './telegram-data.js';
 import { queueTelegramTest } from './telegram-deliveries.js';
 import type { Database } from '@iot/database';
@@ -356,7 +357,10 @@ export async function processTelegramUpdate(
     const actions = screen.rows.flatMap((row) => row.map((button) => button.action));
     let index = 0;
     const keyboard = screen.rows.map((row) =>
-      row.map((button) => ({ text: button.text, callback_data: `ag_${callbackToken}_${index++}` })),
+      row.map((button) => ({
+        ...telegramButtonPresentation(button.text, button.icon, button.style),
+        callback_data: `ag_${callbackToken}_${index++}`,
+      })),
     );
     const saved = await db.telegramConnection.updateMany({
       where: { telegramUserId, lastUpdateId: connection.lastUpdateId, userId: connection.userId },
@@ -401,7 +405,7 @@ export async function processTelegramUpdate(
         activeDeviceId &&
         (await db.device.findFirst({ where: { id: activeDeviceId, archivedAt: null } }))
       ) {
-        const caption = '📈 Biểu đồ AirGuard IoT · Giờ Việt Nam';
+        const caption = `${telegramIconHtml('chart')} Biểu đồ AirGuard IoT · Giờ Việt Nam`;
         let photoMessageId = connection.photoMessageId;
         if (photoMessageId) {
           try {
@@ -409,7 +413,7 @@ export async function processTelegramUpdate(
               chat_id: chatId,
               message_id: photoMessageId,
               photo: screen.photo,
-              media: { type: 'photo', media: 'attach://photo', caption },
+              media: { type: 'photo', media: 'attach://photo', caption, parse_mode: 'HTML' },
             });
           } catch (error) {
             if (error instanceof TelegramApiError && error.code === 'TELEGRAM_MESSAGE_GONE')
@@ -419,9 +423,14 @@ export async function processTelegramUpdate(
           }
         }
         if (!photoMessageId) {
-          const sent = z
-            .object({ message_id: integer.positive() })
-            .parse(await api('sendPhoto', { chat_id: chatId, photo: screen.photo, caption }));
+          const sent = z.object({ message_id: integer.positive() }).parse(
+            await api('sendPhoto', {
+              chat_id: chatId,
+              photo: screen.photo,
+              caption,
+              parse_mode: 'HTML',
+            }),
+          );
           photoMessageId = sent.message_id;
         }
         await db.telegramConnection.updateMany({

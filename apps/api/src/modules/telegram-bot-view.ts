@@ -1,3 +1,4 @@
+import { telegramIconHtml as icon } from './telegram-presentation.js';
 import type { Database } from '@iot/database';
 import type { DeviceView } from '@iot/contracts';
 import { sensorFreshness } from '@iot/contracts/freshness';
@@ -97,7 +98,7 @@ export function telegramDeviceStatus(device: DeviceView, now = Date.now()): stri
       ? qualities[quality]
       : (levels[level ?? 'unknown'] ?? 'Chưa xác định');
   const lines = [
-    `📊 <b>${html(device.name)}</b>`,
+    `${icon('status')} <b>${html(device.name)}</b>`,
     `${device.status === 'online' ? '🟢 ONLINE' : '⚫ OFFLINE'}${device.source_kind === 'simulator' ? ' · MÔ PHỎNG' : ''}`,
     `📌 Tổng thể: <b>${current ? lastLevel : 'CHƯA XÁC ĐỊNH'}</b>`,
   ];
@@ -125,7 +126,7 @@ export async function telegramBotScreen(
   if (view.screen === 'menu')
     return {
       text:
-        '<b>AirGuard IoT</b>' +
+        `${icon('home')} <b>AirGuard IoT</b>` +
         (!allowed
           ? connection.userId
             ? '\nTài khoản không có quyền truy cập.'
@@ -153,7 +154,7 @@ export async function telegramBotScreen(
       };
     if (allowed) return telegramAdvancedScreen(db, connection, view, now);
     return {
-      text: `⚙️ <b>Cài đặt</b>\n${allowed ? 'Đã liên kết tài khoản' : connection.userId ? 'Tài khoản không có quyền truy cập.' : 'Liên kết tại Cài đặt → Telegram trên web.'}`,
+      text: `${icon('settings')} <b>Cài đặt</b>\n${allowed ? 'Đã liên kết tài khoản' : connection.userId ? 'Tài khoản không có quyền truy cập.' : 'Liên kết tại Cài đặt → Telegram trên web.'}`,
       rows: [...(connection.userId ? [[button('Hủy liên kết Telegram', 'unlink')]] : []), back],
     };
   }
@@ -194,7 +195,7 @@ export async function telegramBotScreen(
   const page = Math.min(Math.max(view.page ?? 0, 0), Math.max(0, Math.ceil(count / 5) - 1));
   const devices = await listDevices(db, 'false', undefined, { skip: page * 5, take: 5 });
   const text = [
-    '📱 <b>Danh sách thiết bị</b>',
+    `${icon('devices')} <b>Danh sách thiết bị</b>`,
     ...devices.map(
       (device) =>
         `\n${device.status === 'online' ? '🟢' : '⚫'} <b>${html(device.name)}</b> · ${device.status === 'online' ? 'ONLINE' : 'OFFLINE'}\nCập nhật: ${localTime(measured(device))}`,
@@ -250,7 +251,10 @@ async function historyDevicePicker(db: Database, view: BotView): Promise<BotScre
       button('🏠 Trang chủ', 'menu'),
     ],
   );
-  return { text: `📱 <b>Lọc thiết bị</b>${!devices.length ? '\nChưa có thiết bị.' : ''}`, rows };
+  return {
+    text: `${icon('devices')} <b>Lọc thiết bị</b>${!devices.length ? '\nChưa có thiết bị.' : ''}`,
+    rows,
+  };
 }
 
 const causeLabel: Record<string, string> = { gas: 'Khí gas', co: 'CO', flame: 'Lửa' };
@@ -301,7 +305,7 @@ function historyDetail(
         ? '🟠 Cảnh báo'
         : '⚠️ Chưa xác định';
   const text = [
-    '📋 <b>Chi tiết sự cố</b>',
+    `${icon('history')} <b>Chi tiết sự cố</b>`,
     `📟 <b>${html(i.device.name)}</b>${i.device.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''}`,
     `Sự cố: <b>${causeLabel[i.condition] ?? 'Cảm biến'}</b>`,
     `Mức độ: <b>${levelText}</b>`,
@@ -363,7 +367,7 @@ async function compactHistory(
       })))
     : null;
   const text = [
-    '📋 <b>Lịch sử cảnh báo</b>',
+    `${icon('history')} <b>Lịch sử cảnh báo</b>`,
     `📟 ${view.deviceId ? (name ? html(name.name) : 'Thiết bị không khả dụng') : 'Tất cả thiết bị'}${name?.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''} · ${days === 1 ? '24 giờ' : `${days} ngày`}`,
     ...(view.severity ? [`Mức cao nhất: ${view.severity.toUpperCase()}`] : []),
   ];
@@ -496,7 +500,7 @@ async function telegramIncidentScreen(
   const text = [
     history
       ? `📋 <b>Lịch sử cảnh báo · ${days === 1 ? '24 giờ' : `${days} ngày`}</b>`
-      : '🚨 <b>Cảnh báo hiện tại</b>',
+      : `${icon('alerts')} <b>Cảnh báo hiện tại</b>`,
   ];
   if (view.deviceId) {
     const d = await db.device.findFirst({

@@ -1,3 +1,4 @@
+import { telegramIconHtml as icon } from './telegram-presentation.js';
 import type { Database } from '@iot/database';
 import { Prisma } from '@prisma/client';
 import type { Stats } from '@iot/contracts';
@@ -198,7 +199,7 @@ export async function telegramReport(
     { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
   );
   const lines = [
-    '📋 <b>Báo cáo AirGuard IoT</b>',
+    `${icon('report')} <b>Báo cáo AirGuard IoT</b>`,
     `📟 ${device ? html(device.name) : `Tất cả thiết bị (${counts.devices})`}${device?.sourceKind === 'simulator' ? ' · MÔ PHỎNG' : ''}`,
     `🕒 ${telegramTime(range.from)} → ${telegramTime(range.to)}`,
     '',

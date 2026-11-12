@@ -66,3 +66,17 @@ it('enables the interactive bot independently of alert chat ID and requires a va
     telegramBot: { token: '123456789:abcdefghijklmnopqrstuvwxyz_123456789' },
   });
 });
+it('keeps custom emoji opt-in and permits disabling button colors independently', () => {
+  const base = { DATABASE_URL: 'postgresql://localhost/iot' };
+  expect(parseConfig(base).telegramPresentation).toEqual({
+    customEmojiEnabled: false,
+    buttonStylesEnabled: true,
+  });
+  expect(
+    parseConfig({
+      ...base,
+      TELEGRAM_CUSTOM_EMOJI_ENABLED: 'true',
+      TELEGRAM_BUTTON_STYLES_ENABLED: 'false',
+    }).telegramPresentation,
+  ).toEqual({ customEmojiEnabled: true, buttonStylesEnabled: false });
+});

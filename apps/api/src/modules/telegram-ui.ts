@@ -1,3 +1,4 @@
+import type { TelegramIconName, TelegramButtonStyle } from './telegram-presentation.js';
 import type { ChartMetric } from './telegram-data.js';
 export type BotView = {
   screen:
@@ -43,7 +44,12 @@ export type BotAction = {
   };
   testNotification?: boolean;
 };
-export type BotButton = { text: string; action: BotAction };
+export type BotButton = {
+  text: string;
+  action: BotAction;
+  icon?: TelegramIconName;
+  style?: TelegramButtonStyle;
+};
 export type BotScreen = { text: string; rows: BotButton[][]; photo?: Buffer };
 export const button = (
   text: string,

@@ -20,6 +20,8 @@ export function parseConfig(env: Record<string, string | undefined>) {
       LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
       TELEGRAM_ENABLED: z.enum(['true', 'false']).default('false'),
       TELEGRAM_BOT_ENABLED: z.enum(['true', 'false']).default('false'),
+      TELEGRAM_CUSTOM_EMOJI_ENABLED: z.enum(['true', 'false']).default('false'),
+      TELEGRAM_BUTTON_STYLES_ENABLED: z.enum(['true', 'false']).default('true'),
       TELEGRAM_BOT_TOKEN: z.string().optional(),
       TELEGRAM_CHAT_ID: z.string().optional(),
       TELEGRAM_INCLUDE_SIMULATORS: z.enum(['true', 'false']).default('false'),
@@ -95,6 +97,10 @@ export function parseConfig(env: Record<string, string | undefined>) {
             subject: input.WEB_PUSH_VAPID_SUBJECT!,
           }
         : undefined,
+    telegramPresentation: {
+      customEmojiEnabled: input.TELEGRAM_CUSTOM_EMOJI_ENABLED === 'true',
+      buttonStylesEnabled: input.TELEGRAM_BUTTON_STYLES_ENABLED === 'true',
+    },
     telegramBot:
       input.TELEGRAM_BOT_ENABLED === 'true' ? { token: input.TELEGRAM_BOT_TOKEN! } : undefined,
     telegram:
