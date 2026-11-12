@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
 import { PageTitle, LoadState, roleText } from '../components/FeatureUI.js';
+import { TelegramSettings } from '../components/TelegramSettings.js';
 import { PushSettings } from '../components/PushSettings.js';
 export default function SettingsPage({
   user,
@@ -53,6 +54,7 @@ export default function SettingsPage({
           <span className="badge">{roleText[user.role]}</span>
         </section>
         <PushSettings />
+        <TelegramSettings />
         <section className="panel feature-section">
           <h2>Đổi mật khẩu</h2>
           <p className="caption">Bạn sẽ đăng xuất trên mọi thiết bị sau khi đổi mật khẩu.</p>

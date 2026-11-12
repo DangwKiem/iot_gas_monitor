@@ -18,23 +18,28 @@ self.addEventListener('push', (event) => {
     /* Visible generic fallback; no secrets or raw payload logging. */
   }
   const severity =
-    payload.severity === 'critical'
-      ? 'CRITICAL'
-      : payload.severity === 'warning'
-        ? 'WARNING'
-        : 'Thông báo';
+    payload.ended === true
+      ? 'RESOLVED'
+      : payload.severity === 'critical'
+        ? 'CRITICAL'
+        : payload.severity === 'warning'
+          ? 'WARNING'
+          : 'Thông báo';
   const id =
     typeof payload.incident_id === 'string' && incidentPattern.test(payload.incident_id)
       ? payload.incident_id
       : null;
-  const body = `${payload.simulator === true ? 'MÔ PHỎNG · ' : ''}${payload.ended === true ? 'Có bản ghi sự cố đã kết thúc.' : 'Có cập nhật cảnh báo cần xem.'} Mở AirGuard và đăng nhập để xem chi tiết.`;
+  const body = `${payload.simulator === true ? 'MÔ PHỎNG · ' : ''}${payload.ended === true ? 'Có bản ghi sự cố đã kết thúc.' : payload.uncertain === true ? 'Chưa xác nhận kết thúc sự cố.' : payload.acknowledged === true ? 'Sự cố đã được xác nhận và chưa kết thúc.' : 'Có cập nhật cảnh báo cần xem.'} Mở AirGuard và đăng nhập để xem chi tiết.`;
   event.waitUntil(
-    self.registration.showNotification(`AirGuard — ${severity}`, {
-      body,
-      tag: id ? `airguard-${id}-${severity}` : 'airguard-alert',
-      renotify: false,
-      data: { url: safePath(payload.url) },
-    }),
+    self.registration.showNotification(
+      `AirGuard — ${severity}${payload.uncertain === true && payload.ended !== true ? ' · Chưa xác nhận' : ''}`,
+      {
+        body,
+        tag: id ? `airguard-${id}` : 'airguard-alert',
+        renotify: severity === 'CRITICAL' && payload.uncertain !== true,
+        data: { url: safePath(payload.url) },
+      },
+    ),
   );
 });
 self.addEventListener('notificationclick', (event) => {

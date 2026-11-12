@@ -24,7 +24,12 @@ const keyParam = z.string().regex(/^[A-Za-z0-9_-]{16}$/);
 
 export function registerDeviceTransport(
   router: Router,
-  { db, reply, publish }: Pick<FeatureContext, 'db' | 'reply' | 'publish'>,
+  {
+    db,
+    reply,
+    publish,
+    notifyConnectivity,
+  }: Pick<FeatureContext, 'db' | 'reply' | 'publish' | 'notifyConnectivity'>,
 ) {
   router.get('/device/config', async (req, res) => {
     const key = await authenticateDevice(db, req.headers.authorization);
@@ -80,7 +85,7 @@ export function registerDeviceTransport(
           },
         });
       }
-      await markSeen(tx, device, new Date(), key.keyId);
+      await markSeen(tx, device, new Date(), key.keyId, notifyConnectivity);
     });
     reply(res, { accepted: true });
     publish('device.config.applied', key.deviceId);
@@ -100,19 +105,23 @@ export function registerDeviceTransport(
           where: { id: device.id },
           data: { bootId: input.boot_id, bootCounter: count, latestSeq: null, latestId: null },
         });
-      await markSeen(tx, device, new Date(), key.keyId);
+      await markSeen(tx, device, new Date(), key.keyId, notifyConnectivity);
     });
     reply(res, { accepted: true });
     publish('device.status.changed', key.deviceId);
   });
 }
 
-export function registerDevices(router: Router, { db, reply, admin, publish }: FeatureContext) {
+export function registerDevices(
+  router: Router,
+  { db, reply, admin, publish, notifyConnectivity }: FeatureContext,
+) {
   router.get('/devices', async (req, res) => {
     const query = z
       .object({ archived: z.enum(['all', 'true', 'false']).default('false') })
       .parse(req.query);
-    for (const id of await reconcileOffline(db)) publish('device.status.changed', id);
+    for (const id of await reconcileOffline(db, new Date(), notifyConnectivity))
+      publish('device.status.changed', id);
     reply(res, await listDevices(db, query.archived));
   });
   router.post('/devices', admin, async (req, res) => {

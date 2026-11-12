@@ -1,5 +1,68 @@
 # Trạng thái kiểm thử — phần mềm v0.6
 
+## Telegram Bot — lượt 3, 12/11/2026
+
+- Hoàn thiện menu và `/chart`, `/report`, `/settings`; không còn mục Chưa khả dụng. Lượt 1/2 vẫn có liên kết, trạng thái thiết bị, alerts/ACK và history dùng chung incident với web/push.
+- Biểu đồ 5 cảm biến, 1 giờ/24 giờ/7 ngày, tối đa 60/24/168 điểm. MQ/DHT dùng chung analytics với REST, gồm rollup, weighted statistics và kiểm tra độ phân giải ADC. Đường trung bình có vạch min/max; thiếu dữ liệu giữ khoảng trống. Flame lấy MAX trạng thái trong từng khoảng từ raw còn lưu. PNG tạo tại backend bằng sharp, không cần Chromium trong production; upload multipart và sửa lại ảnh khi đổi khoảng.
+- Báo cáo hôm nay/7/30 ngày: sự cố theo mức cao nhất, đang mở hiện tại, kết thúc trong kỳ, lần OFFLINE và thiết bị đang offline; chọn thiết bị để xem TB/min/max. Thống kê gồm cả phần giờ hiện tại, kết hợp rollup/raw không tính trùng. Không có mẫu hợp lệ thì thông báo thiếu dữ liệu, không sinh PPM/AQI.
+- Cài đặt DB: tài khoản liên kết, theo dõi một/tất cả thiết bị, WARNING, báo cáo ngày/tuần/tắt, giờ và phút 00/15/30/45, ngày trong tuần, kiểm tra nhận tin, hủy liên kết. CRITICAL của thiết bị thật luôn bật và không điều khiển còi. Mô phỏng chỉ tự gửi khi người dùng chọn theo dõi thiết bị đó.
+- Lịch Asia/Ho_Chi_Minh nằm trong worker backend; khóa hàng DB và unique link-generation/event-key chống scheduler/worker chạy chồng. Tối đa 8 lần thử, backoff/429, TTL 6 giờ cho cảnh báo và 48 giờ cho báo cáo. Khi khởi động lại, xử lý một kỳ đang đến hạn và chuyển tới lịch kế tiếp; không phát lại hàng loạt kỳ đã bỏ lỡ. Báo cáo tự động gồm ngày/7 ngày đã hoàn tất trước ngày gửi.
+- Kiểm tra lại quyền, liên kết và thiết bị trước gửi; hủy liên kết/đổi quyền thay link-version, ngừng báo cáo và vô hiệu hóa job cũ. Đổi lịch hủy báo cáo đang chờ. Restore thu hồi liên kết, tắt lịch và đánh dấu outbox khôi phục cần rà soát. Kênh Telegram global trùng chat liên kết được chuyển sang outbox cá nhân, không gửi hai bản; group/global khác vẫn giữ nguyên.
+- Test mới: PNG cả 5 cảm biến, khoảng trống, rollup/profile ADC, thống kê, các màn hình/cài đặt giờ, upload lỗi/retry, scheduler đồng thời/restart, timeout/429/max-attempt, WARNING-off không chặn Critical/Resolved, hủy liên kết/đổi quyền/archive, rate limit và backup/restore. API Telegram giả lập; PostgreSQL và ảnh PNG là thật. Chưa nghiệm thu gửi ảnh/báo cáo tới Telegram thật hoặc soak dài hạn. Telegram sendMessage không có idempotency key nên mất phản hồi sau khi đã nhận tin vẫn có thể gây trùng.
+- Migration `202611120005_telegram_advanced` đã áp dụng local, giữ nguyên dữ liệu. Cài dependencies bằng `npm install`, generate/migrate như trước. Không thêm biến môi trường; dùng `TELEGRAM_BOT_ENABLED=true` và token hiện có. Báo cáo mặc định tắt; bật tại `/settings`. Không thay firmware/ngưỡng/còi.
+- Production audit sau vá body-parser/fast-uri: 0 vulnerabilities. Full audit còn 7 moderate trong nhánh typescript-eslint/minimatch của dev tooling, bản sửa được npm đề xuất thay đổi nhánh phiên bản; chưa ép cập nhật công cụ lint.
+
+Kết quả nghiệm thu lượt 3: PostgreSQL **176/176 đạt**; unit **81 đạt** (các ca DB/browser/load dùng runner riêng); E2E Chromium **5 đạt, 1 bỏ qua** vì native Notification ở headless. Typecheck, ESLint, build và format đạt. Có kiểm thử khóa đồng thời giữa enqueue ESP32 và ACK Telegram; dùng NO KEY UPDATE để FK enqueue không chặn vòng ngược qua device. API local đã khởi động lại và health trả 200, bot giữ lease polling.
+
+File quan trọng lượt 3: `apps/api/src/modules/telegram-data.ts`, `telegram-chart.ts`, `telegram-advanced-view.ts`, `telegram-ui.ts`, `telegram-deliveries.ts` (mới); `telegram-bot.ts`, `telegram-bot-view.ts`, `telegram-client.ts`, `telegram-links.ts`, `analytics.ts`, `notifications.ts`, `maintenance.ts`, `apps/api/src/runtime.ts`; `packages/database/prisma/schema.prisma` và migration `202611120005_telegram_advanced`; `tools/operations/backup.ts`; `apps/web/src/pages/AuditPage.tsx`; `apps/api/tests/telegram-advanced.test.ts`, `telegram-client.test.ts`, `telegram-bot.test.ts`, `backup.test.ts`; `package.json`, `package-lock.json` và tài liệu vận hành/kiểm thử.
+
+## Telegram Bot — lượt 2, 12/11/2026
+
+- Chuỗi Warning → Critical → Warning → Critical → Normal giữ một incident, timeline gồm hai escalated và một deescalated; retry snapshot/event không nhân incident hoặc outbox. Warning → Normal và Critical → Resolved đều có bản tóm tắt kết thúc.
+- Hai điều kiện gas/CO độc lập, ACK idempotent đúng quyền và phát realtime; ACK không đổi trạng thái sự cố hoặc buzzer snapshot. Callback cũ bị từ chối sau đổi quyền/archived; sự cố kết thúc trước ACK vẫn RESOLVED. Chưa liên kết/tài khoản vô hiệu hóa không xem được alerts/history.
+- `/alerts`: danh sách/chi tiết/xác nhận/quay lại/làm mới. `/history`: 24 giờ/7 ngày/30 ngày, thiết bị, peak Warning/Critical, phân trang, chi tiết và quay lại. HTML được escape; giờ Việt Nam; không lộ UUID hoặc thời điểm kỹ thuật.
+- Queue: timeout, 429/backoff, giới hạn 8 lần, restart/reclaim, worker đồng thời, coalesce chỉ sau thành công, tin đã kết thúc nằm trong queue, mất lease và rollback enqueue. Telegram API dùng fake transport, không gửi tin thử thật.
+- Presence: một OFFLINE cho mỗi chuyển trạng thái và ONLINE phục hồi, không spam initial contact, không đóng gas incident; stale offline đọc latest online khi gửi. Rollback nếu ghi outbox lỗi. Retention giữ status-history có FK notification, dry-run đếm đúng dữ liệu được phép dọn.
+- Đồng bộ: REST/Telegram/Web Push cùng mức hiện tại, mức cao nhất, ACK và resolved; service worker dùng cùng tag theo incident và ưu tiên resolved. Web Push vẫn giữ chính sách enqueue hiện có; không thêm recovery/ACK push riêng.
+- Kết quả: `npm test` 78 đạt, 123 bỏ qua cho runner riêng; `npm run test:integration` 157/157 đạt trên PostgreSQL biệt lập; E2E Chromium 5 đạt, 1 native Notification bỏ qua vì headless. Typecheck/build/lint/format đều đạt. Không sửa firmware hoặc dependency, không thêm Task 3.
+- Hai migration lượt 2 đã áp dụng vào database local: `202611120003_telegram_connectivity`, `202611120004_incident_deescalation`, không reset dữ liệu. Không cần cấu hình mới. Không xác nhận giao tin thật tới Telegram; mất phản hồi sau khi Telegram nhận tin vẫn có thể gây trùng vì API không hỗ trợ idempotency key.
+
+Các file của lượt 2:
+
+- Service/lifecycle/outbox: `apps/api/src/modules/incident-service.ts` (mới), `alerts.ts`, `notifications.ts`, `telegram-message.ts`, `presence.ts`, `maintenance.ts`, `web-push.ts`.
+- Bot: `apps/api/src/modules/telegram-bot-view.ts`, `telegram-bot.ts`, `telegram-bot-worker.ts`.
+- Wiring backend: `apps/api/src/app.ts`, `runtime.ts`, `lib/context.ts`, `modules/devices.ts`, `modules/telemetry.ts`.
+- Contract/database: `packages/contracts/src/features.ts`, `packages/database/prisma/schema.prisma`, `packages/database/prisma/migrations/202611120003_telegram_connectivity/migration.sql`, `202611120004_incident_deescalation/migration.sql`.
+- Web: `apps/web/src/components/FeatureUI.tsx`, `pages/AlertsPage.tsx`, `pages/IncidentPage.tsx`, `public/push-sw.js`.
+- Tests: `apps/api/tests/incident-task2.test.ts` (mới), `telegram-bot.test.ts`, `telegram-message.test.ts`, `telegram.test.ts`, `apps/web/src/lib/push-service-worker.test.ts`.
+- Tài liệu: `docs/operations/local-runbook.md`, `docs/api/monitoring.md`, `docs/architecture/decisions.md`, `docs/testing/status.md`.
+
+## Telegram Bot tương tác — lượt 1, 12/11/2026
+
+- Đã kiểm tra `/start`, `/devices`, `/status`, toàn bộ sáu nút menu, quay lại/làm mới, chọn thiết bị và phân trang. Ba mục cảnh báo hiện tại/lịch sử/biểu đồ chỉ có trạng thái Chưa khả dụng, không triển khai lượt 2/3.
+- Liên kết qua web bằng mã một lần: auth/CSRF, hash mã, hết hạn/thay mã, thu hồi session, từ chối gắn đè tài khoản Telegram khác. Hủy trên web/bot, xác nhận/hủy thao tác, vô hiệu hóa nút cũ; đổi mật khẩu/quyền/khóa tài khoản và restore thu hồi liên kết.
+- Kiểm tra quyền ở lệnh/callback, tài khoản không hoạt động, thiết bị lưu trữ, callback giả/hết hạn/sai người/sai tin nhắn, update trùng và bấm nhanh. Polling kiểm tra offset bền vững, chỉ một owner, retry update chưa xác nhận khi timeout, abort và shutdown idempotent.
+- Trạng thái dùng số đo backend và cùng hàm freshness với dashboard: ONLINE/OFFLINE, dữ liệu thiếu/cũ/unsynced/lỗi cảm biến, SAFE/WARNING/CRITICAL, phát hiện lửa không đi cùng kết luận SAFE, escape HTML, giờ Việt Nam. Không sinh PPM/AQI.
+- `npm test`: 77 đạt, 107 bỏ qua cho runner riêng. Bộ backend với PostgreSQL biệt lập đạt 140 kiểm thử; ca bổ sung cảm biến lỗi không che cảnh báo Critical mới cũng đạt qua unit test. Chromium E2E đạt 5, bỏ qua 1 native Notification do headless. Build/typecheck/lint/format đạt. Telegram API giả lập trong kiểm thử; không gửi tin thật.
+- Migration `202611120002_telegram_bot` đã áp dụng local. `TELEGRAM_BOT_ENABLED` mặc định false; cần bật và khởi động lại API với bot token hợp lệ để dùng menu thật. Không tự gỡ webhook hoặc thay consumer của token.
+- Phạm vi quyền kế thừa RBAC một nhóm hiện có; chưa có ACL riêng từng thiết bị. Chưa kiểm tra bot/chat Telegram thật.
+
+Các file của lượt 1:
+
+- Bot/API: `apps/api/src/modules/telegram-bot.ts`, `telegram-bot-view.ts`, `telegram-bot-worker.ts`, `telegram-links.ts`, `telegram-client.ts`, `telemetry.ts`, `users.ts`; `apps/api/src/app.ts`, `config.ts`, `runtime.ts`, `server.ts`, `openapi.ts`.
+- Web: `apps/web/src/components/TelegramSettings.tsx`, `apps/web/src/pages/SettingsPage.tsx`, `AuditPage.tsx`, `apps/web/src/styles.css`, `apps/web/src/lib/freshness.ts`.
+- Dữ liệu dùng chung: `packages/contracts/src/freshness.ts`, `index.ts`, `packages/contracts/package.json`; `packages/database/prisma/schema.prisma`, `packages/database/prisma/migrations/202611120002_telegram_bot/migration.sql`; `tools/operations/backup.ts`.
+- Kiểm thử: `apps/api/tests/telegram-bot.test.ts`, `telegram-bot-view.test.ts`, `telegram-client.test.ts`, `config.test.ts`, `backup.test.ts`; `apps/web/src/components/TelegramSettings.test.tsx`.
+- Cấu hình/tài liệu: `.env.example`, `docs/operations/local-runbook.md`, `docs/api/monitoring.md`, `docs/testing/status.md`.
+
+## Telegram — 12/11/2026
+
+- Nội dung HTML được tách khỏi worker; kiểm tra escape tên/vị trí, giờ Asia/Ho_Chi_Minh, mốc qua ngày/00:00, thời gian không xác định, WARNING/CRITICAL/RESOLVED, tăng/giảm mức và nhãn mô phỏng. Không sinh PPM/AQI hoặc lộ UUID/timestamp kỹ thuật.
+- PostgreSQL thật kiểm tra cả chuỗi snapshot Warning → Critical → Normal và durable event kết thúc đến trước sự kiện bắt đầu; retry không nhân queue, gửi trễ chỉ còn một bản tóm tắt đã kết thúc.
+- Worker kiểm tra lease theo incident, ưu tiên Critical, gộp các job sau thành công; lỗi mạng/429 không đánh dấu job khác là đã bao phủ. Worker mất lease không được ghi đè kết quả hoặc gộp job. Giữ nguyên backoff, timeout, TTL, giới hạn attempts và lịch sử terminal.
+- `npm test`: 61 đạt, 88 bỏ qua do cần runner database/browser riêng. `npm run test:integration`: 109 đạt trên PostgreSQL biệt lập; typecheck, lint và format đạt. Không gửi Telegram thật trong các kiểm thử.
+- Migration `202611120001_telegram_resolved` đã áp dụng trên DB local, chỉ mở rộng constraint mức thông báo. Đối chiếu trước/sau giữ nguyên 139 incidents, 299 events và 145 notifications. Chưa xác nhận giao tin tới bot/chat Telegram thật.
+
 ## Kiểm tra còi — firmware 0.3.1
 
 - Thêm lựa chọn DC/PWM, cấu hình tần số và lệnh Serial `d`/`p`/`t` kích thử 2 giây. GPIO25 chỉ thay cấu hình khi đổi mode và chỉ cập nhật duty/mức khi lệnh thay đổi.

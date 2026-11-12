@@ -6,6 +6,9 @@ import { PageTitle, LoadState, dateText, roleText } from '../components/FeatureU
 
 const actionText: Record<string, string> = {
   'user.created': 'Tạo tài khoản',
+  'telegram.linked': 'Liên kết Telegram',
+  'telegram.settings_updated': 'Cập nhật cài đặt Telegram',
+  'telegram.unlinked': 'Hủy liên kết Telegram',
   'user.updated': 'Cập nhật tài khoản',
   'user.password_changed': 'Đổi mật khẩu',
   'user.email_changed': 'Đổi email',

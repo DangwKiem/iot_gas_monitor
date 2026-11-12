@@ -1070,3 +1070,11 @@ details[open] > summary {
     padding-top: 0;
   }
 }
+
+.telegram-link-code {
+  display: block;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+  font-size: 13px;
+}

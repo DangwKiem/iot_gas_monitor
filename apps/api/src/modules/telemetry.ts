@@ -5,7 +5,7 @@ import { hashSecret } from './auth.js';
 import { ApiError } from '../lib/errors.js';
 import { markSeen } from './presence.js';
 import { applySnapshot } from './alerts.js';
-import type { AlertNotifier } from './notifications.js';
+import type { AlertNotifier, ConnectivityNotifier } from './notifications.js';
 
 export function readingView(row: SensorReading): ReadingView {
   return {
@@ -19,6 +19,7 @@ export async function listDevices(
   db: Database,
   archived = 'false',
   id?: string,
+  page?: { skip: number; take: number },
 ): Promise<DeviceView[]> {
   const devices = await db.device.findMany({
     where: {
@@ -28,8 +29,9 @@ export async function listDevices(
           ? {}
           : { archivedAt: archived === 'true' ? { not: null } : null }),
     },
-    orderBy: { createdAt: 'asc' },
-    take: 100,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    skip: page?.skip,
+    take: page?.take ?? 100,
   });
   const ids = devices.flatMap((d) => (d.latestId === null ? [] : [d.latestId]));
   const readings = await db.sensorReading.findMany({ where: { id: { in: ids } } });
@@ -62,6 +64,7 @@ export async function ingest(
   keyId: string,
   input: Telemetry,
   notify?: AlertNotifier,
+  notifyConnectivity?: ConnectivityNotifier,
 ) {
   const now = new Date();
   const transmission = input.transmission;
@@ -196,7 +199,7 @@ export async function ingest(
       where: { id: device.id },
       data: { lastSeenAt: now, latestId, bootCounter, bootId, latestSeq },
     });
-    await markSeen(tx, device, now, keyId);
+    await markSeen(tx, device, now, keyId, notifyConnectivity);
     return { accepted, created, eventsChanged };
   });
 }

@@ -28,6 +28,8 @@ model User {
   acknowledgements AlertAcknowledgement[]
   configs          DeviceConfig[]
   auditLogs        AuditLog[]
+  telegramConnection TelegramConnection?
+  telegramLinkCode TelegramLinkCode?
 
   @@map("users")
 }
@@ -39,6 +41,7 @@ model Session {
   expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
   user      User     @relation(fields: [userId], references: [id])
   pushSubscription WebPushSubscription?
+  telegramLinkCodes TelegramLinkCode[]
 
   @@index([expiresAt])
   @@map("sessions")
@@ -132,6 +135,7 @@ model AlertIncident {
   events          AlertEvent[]
   acknowledgement AlertAcknowledgement?
   states          AlertState[]
+  botDeliveries TelegramBotDelivery[]
   notifications   TelegramNotification[]
   pushDeliveries WebPushDelivery[]
 
@@ -232,6 +236,8 @@ model DeviceStatusHistory {
 
   @@index([deviceId, id(sort: Desc)])
   @@map("device_status_history")
+  botDeliveries TelegramBotDelivery[]
+  telegramNotification TelegramNotification?
 }
 
 model AuditLog {
@@ -270,7 +276,7 @@ model SensorRollup {
 
 model TelegramNotification {
   id            String        @id @default(uuid()) @db.Uuid
-  incidentId    String        @map("incident_id") @db.Uuid
+  incidentId    String?       @map("incident_id") @db.Uuid
   severity      String
   status        String        @default("pending")
   attempts      Int           @default(0)
@@ -281,11 +287,13 @@ model TelegramNotification {
   leaseToken    String?       @map("lease_token") @db.Uuid
   sentAt        DateTime?     @map("sent_at") @db.Timestamptz(3)
   lastErrorCode String?       @map("last_error_code")
-  incident      AlertIncident @relation(fields: [incidentId], references: [id])
+  incident      AlertIncident? @relation(fields: [incidentId], references: [id], onDelete: Restrict)
 
   @@unique([incidentId, severity])
   @@index([status, nextAttemptAt])
   @@map("telegram_notifications")
+  statusHistoryId BigInt? @unique @map("status_history_id")
+  statusHistory DeviceStatusHistory? @relation(fields: [statusHistoryId], references: [id], onDelete: Restrict)
 }
 
 model WebPushSubscription {
@@ -324,4 +332,76 @@ model WebPushDelivery {
   @@unique([incidentId, severity, subscriptionId])
   @@index([status, nextAttemptAt])
   @@map("web_push_deliveries")
+}
+
+model TelegramConnection {
+  linkVersion String @default(uuid()) @map("link_version") @db.Uuid
+  warningEnabled Boolean @default(true) @map("warning_enabled")
+  trackedDeviceId String? @map("tracked_device_id") @db.Uuid
+  reportFrequency String @default("off") @map("report_frequency")
+  reportMinute Int @default(480) @map("report_minute")
+  reportWeekday Int @default(1) @map("report_weekday")
+  nextReportAt DateTime? @map("next_report_at") @db.Timestamptz(3)
+  queryAllowedAt DateTime? @map("query_allowed_at") @db.Timestamptz(3)
+  photoMessageId Int? @map("photo_message_id")
+  deliveries TelegramBotDelivery[]
+  telegramUserId String @id @map("telegram_user_id")
+  chatId String @map("chat_id")
+  userId String? @unique @map("user_id") @db.Uuid
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  selectedDeviceId String? @map("selected_device_id") @db.Uuid
+  messageId Int? @map("message_id")
+  callbackToken String @default("") @map("callback_token")
+  callbackExpiresAt DateTime? @map("callback_expires_at") @db.Timestamptz(3)
+  actions Json @default("[]")
+  view Json @default("{\"screen\":\"menu\"}")
+  lastUpdateId BigInt @default(-1) @map("last_update_id")
+  pending Boolean @default(false)
+  nextAllowedAt DateTime? @map("next_allowed_at") @db.Timestamptz(3)
+  @@map("telegram_connections")
+}
+model TelegramLinkCode {
+  userId String @id @map("user_id") @db.Uuid
+  tokenHash String @unique @map("token_hash")
+  sessionId String @map("session_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  @@map("telegram_link_codes")
+}
+model TelegramBotCursor {
+  id String @id
+  offset BigInt @default(0)
+  username String?
+  leaseToken String? @map("lease_token") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(3)
+  @@map("telegram_bot_cursors")
+}
+
+model TelegramBotDelivery {
+  id String @id @default(uuid()) @db.Uuid
+  connectionId String @map("connection_id")
+  linkVersion String @map("link_version") @db.Uuid
+  eventKey String @map("event_key")
+  kind String
+  incidentId String? @map("incident_id") @db.Uuid
+  statusHistoryId BigInt? @map("status_history_id")
+  severity String?
+  periodFrom DateTime? @map("period_from") @db.Timestamptz(3)
+  periodTo DateTime? @map("period_to") @db.Timestamptz(3)
+  status String @default("pending")
+  attempts Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  leaseToken String? @map("lease_token") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(3)
+  sentAt DateTime? @map("sent_at") @db.Timestamptz(3)
+  lastErrorCode String? @map("last_error_code")
+  incident AlertIncident? @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  statusHistory DeviceStatusHistory? @relation(fields: [statusHistoryId], references: [id], onDelete: Restrict)
+  connection TelegramConnection @relation(fields: [connectionId], references: [telegramUserId], onDelete: Cascade)
+  @@unique([connectionId, linkVersion, eventKey])
+  @@index([status, nextAttemptAt])
+  @@map("telegram_bot_deliveries")
 }

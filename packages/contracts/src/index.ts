@@ -133,3 +133,5 @@ export * from './features.js';
 export * from './alert-policy.js';
 export * from './users.js';
 export * from './push.js';
+
+export * from './freshness.js';

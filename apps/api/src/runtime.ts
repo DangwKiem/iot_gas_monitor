@@ -6,8 +6,19 @@ import { authenticateUser } from './modules/auth.js';
 import { z } from 'zod';
 import { allowedWebOrigins } from './lib/origins.js';
 import { reconcileOffline } from './modules/presence.js';
-import { telegramNotifier, startTelegramWorker } from './modules/notifications.js';
-import type { TelegramConfig } from './modules/telegram-client.js';
+import {
+  telegramNotifier,
+  telegramConnectivityNotifier,
+  startTelegramWorker,
+} from './modules/notifications.js';
+import { startTelegramBot } from './modules/telegram-bot-worker.js';
+import {
+  personalIncidentNotifier,
+  personalConnectivityNotifier,
+  startPersonalTelegramWorker,
+} from './modules/telegram-deliveries.js';
+import { hashSecret } from './modules/auth.js';
+import type { TelegramBotConfig, TelegramConfig } from './modules/telegram-client.js';
 import { webPushNotifier, startWebPushWorker, type WebPushConfig } from './modules/web-push.js';
 
 export function createRuntime(
@@ -18,6 +29,7 @@ export function createRuntime(
     onFailure?: (entry: { request_id: string; code: string }) => void;
     secureCookies?: boolean;
     telegram?: TelegramConfig;
+    telegramBot?: TelegramBotConfig;
     webPush?: WebPushConfig;
     onNotification?: (entry: {
       notification_id?: string;
@@ -27,17 +39,28 @@ export function createRuntime(
     }) => void;
   } = {},
 ) {
+  const notifyConnectivity =
+    logging.telegram || logging.telegramBot
+      ? async (...args: Parameters<ReturnType<typeof telegramConnectivityNotifier>>) => {
+          if (logging.telegram)
+            await telegramConnectivityNotifier(logging.telegram.includeSimulators)(...args);
+          if (logging.telegramBot) await personalConnectivityNotifier(...args);
+        }
+      : undefined;
   const app = createApp({
+    notifyConnectivity,
     db,
     origin,
     ...logging,
     webPush: logging.webPush,
+    telegramBotKey: logging.telegramBot ? hashSecret(logging.telegramBot.token) : undefined,
     notify:
-      logging.telegram || logging.webPush
-        ? async (tx, incident) => {
+      logging.telegram || logging.webPush || logging.telegramBot
+        ? async (tx, incident, transition) => {
             if (logging.telegram)
               await telegramNotifier(logging.telegram.includeSimulators)(tx, incident);
-            if (logging.webPush) await webPushNotifier()(tx, incident);
+            if (logging.webPush) await webPushNotifier()(tx, incident, transition);
+            if (logging.telegramBot) await personalIncidentNotifier(tx, incident, transition);
           }
         : undefined,
     onTelemetry: (deviceId) =>
@@ -78,13 +101,16 @@ export function createRuntime(
   }
   let timer: ReturnType<typeof setInterval> | undefined;
   let stopWorker: (() => Promise<void>) | undefined;
+  let stopBot: (() => Promise<void>) | undefined;
+  let stopPersonal: (() => Promise<void>) | undefined;
   let stopPushWorker: (() => Promise<void>) | undefined;
   let reconciling = false;
   async function reconcile() {
     if (reconciling) return;
     reconciling = true;
     try {
-      for (const id of await reconcileOffline(db)) publish('device.status.changed', id);
+      for (const id of await reconcileOffline(db, new Date(), notifyConnectivity))
+        publish('device.status.changed', id);
     } catch {
       logging.onFailure?.({ request_id: 'presence', code: 'PRESENCE_RECONCILE_FAILED' });
     } finally {
@@ -92,9 +118,23 @@ export function createRuntime(
     }
   }
   http.on('listening', () => {
-    if (logging.telegram)
-      stopWorker = startTelegramWorker(db, logging.telegram, (entry) =>
+    if (logging.telegramBot)
+      stopPersonal = startPersonalTelegramWorker(db, logging.telegramBot, (entry) =>
         logging.onNotification?.({ ...entry, channel: 'telegram' }),
+      );
+    if (logging.telegramBot)
+      stopBot = startTelegramBot(
+        db,
+        logging.telegramBot,
+        (entry) => logging.onNotification?.({ ...entry, channel: 'telegram' }),
+        fetch,
+        publish,
+      );
+    if (logging.telegram)
+      stopWorker = startTelegramWorker(
+        db,
+        { ...logging.telegram, routeLinkedChats: !!logging.telegramBot },
+        (entry) => logging.onNotification?.({ ...entry, channel: 'telegram' }),
       );
     if (logging.webPush)
       stopPushWorker = startWebPushWorker(db, logging.webPush, (entry) =>
@@ -107,6 +147,8 @@ export function createRuntime(
   http.on('close', () => {
     if (timer) clearInterval(timer);
     void stopWorker?.();
+    void stopBot?.();
+    void stopPersonal?.();
     void stopPushWorker?.();
   });
   namespace.use(async (socket, next) => {
@@ -159,6 +201,8 @@ export function createRuntime(
     http,
     io,
     stopNotifications: async () => {
+      await stopBot?.();
+      await stopPersonal?.();
       await stopWorker?.();
       await stopPushWorker?.();
     },

@@ -1,3 +1,4 @@
+import type { Database } from '@iot/database';
 import type { Router, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -66,6 +67,136 @@ async function write(res: Response, text: string) {
     });
 }
 
+export async function deviceAnalytics(db: Database, deviceId: string, filters: unknown) {
+  const device = await db.device.findUnique({ where: { id: deviceId } });
+  if (!device) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy thiết bị.');
+  const q = analyticsQuerySchema.parse(filters);
+  const from = new Date(q.from!);
+  const to = new Date(q.to!);
+  const duration = to.getTime() - from.getTime();
+  const previousFrom = new Date(from.getTime() - duration);
+  const metric = metrics[q.metric];
+  const time = q.time_basis === 'sampled' ? Prisma.sql`sampled_at` : Prisma.sql`received_at`;
+  const resolution = q.bucket === 'minute' ? 'minute' : 'hour';
+  const rollupInterval = resolution === 'minute' ? 60000 : 3600000;
+  const sqlBase = (start: Date, end: Date) => Prisma.sql`
+      SELECT ${time} AS t, 1 AS total_count,
+        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') AND ${metric.value} IS NOT NULL THEN 1 ELSE 0 END AS valid_count,
+        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') THEN ${metric.value}::double precision ELSE NULL END AS value_sum,
+        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') THEN ${metric.value}::double precision ELSE NULL END AS minimum,
+        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') THEN ${metric.value}::double precision ELSE NULL END AS maximum,
+        COALESCE(${metric.profile},0) AS profile
+      FROM sensor_readings
+      WHERE device_id = ${device.id}::uuid AND ${time} >= ${start} AND ${time} < ${end}
+        ${q.adc_bits === undefined ? Prisma.empty : Prisma.sql`AND ${metric.profile} = ${q.adc_bits}`}
+      UNION ALL SELECT bucket_start, total_count, valid_count, value_sum, minimum, maximum, adc_bits
+      FROM sensor_rollups WHERE device_id = ${device.id}::uuid AND resolution = ${resolution} AND time_basis = ${q.time_basis} AND metric = ${q.metric}
+      AND bucket_start >= ${start} AND bucket_start < ${end}
+      ${q.adc_bits === undefined ? Prisma.empty : Prisma.sql`AND adc_bits = ${q.adc_bits}`}`;
+  const aggregate = Prisma.sql`COALESCE(SUM(total_count),0)::int AS total_count,
+      COALESCE(SUM(valid_count),0)::int AS valid_count,
+      COALESCE(SUM(total_count-valid_count),0)::int AS invalid_count,
+      MIN(minimum) AS min, MAX(maximum) AS max,
+      SUM(value_sum) / NULLIF(SUM(valid_count),0) AS average`;
+  return db.$transaction(
+    async (tx) => {
+      let usesRollups = false;
+      for (const [start, end] of q.compare
+        ? [
+            [previousFrom, from],
+            [from, to],
+          ]
+        : [[from, to]]) {
+        const rolled = await tx.sensorRollup.count({
+          where: {
+            deviceId: device.id,
+            resolution,
+            timeBasis: q.time_basis,
+            metric: q.metric,
+            bucketStart: {
+              gte: new Date(Math.floor(start!.getTime() / rollupInterval) * rollupInterval),
+              lt: end!,
+            },
+          },
+        });
+        usesRollups ||= rolled > 0;
+        if (rolled && (start!.getTime() % rollupInterval || end!.getTime() % rollupInterval))
+          throw new ApiError(
+            422,
+            'ROLLUP_ALIGNMENT_REQUIRED',
+            `Dữ liệu đã tổng hợp: chọn from/to đúng đầu ${resolution === 'minute' ? 'phút' : 'giờ'} UTC hoặc chọn bucket nhỏ hơn nếu còn dữ liệu.`,
+          );
+        if (q.bucket === 'minute') {
+          const expiredMinutes = await tx.sensorRollup.findFirst({
+            where: {
+              deviceId: device.id,
+              resolution: 'hour',
+              timeBasis: q.time_basis,
+              metric: q.metric,
+              bucketStart: { gte: start!, lt: end! },
+            },
+            orderBy: { bucketStart: 'asc' },
+          });
+          if (
+            expiredMinutes &&
+            !(await tx.sensorRollup.findFirst({
+              where: {
+                deviceId: device.id,
+                resolution: 'minute',
+                timeBasis: q.time_basis,
+                metric: q.metric,
+                bucketStart: {
+                  gte: expiredMinutes.bucketStart,
+                  lt: new Date(expiredMinutes.bucketStart.getTime() + 3600000),
+                },
+              },
+            }))
+          )
+            throw new ApiError(
+              422,
+              'ROLLUP_RESOLUTION_UNAVAILABLE',
+              'Dữ liệu phút đã hết hạn. Chọn bucket giờ/ngày.',
+            );
+        }
+      }
+      const profileRows = await tx.$queryRaw<
+        { profiles: number[] | null }[]
+      >`SELECT ARRAY_AGG(DISTINCT profile) FILTER (WHERE profile IS NOT NULL) AS profiles FROM (${sqlBase(q.compare ? previousFrom : from, to)}) AS all_samples`;
+      const profiles = (profileRows[0]?.profiles ?? []).filter((p) => p !== 0);
+      if (profiles.length > 1)
+        throw new ApiError(
+          409,
+          'INCOMPATIBLE_ADC_PROFILES',
+          'Không gộp ADC khác độ phân giải. Chọn adc_bits cụ thể.',
+        );
+      const period = async (start: Date, end: Date) => {
+        const base = sqlBase(start, end);
+        const summary = await tx.$queryRaw<Stats[]>`SELECT ${aggregate} FROM (${base}) AS samples`;
+        const series = await tx.$queryRaw<
+          (Stats & { bucket_start: Date })[]
+        >`SELECT date_trunc(${q.bucket}, t, 'UTC') AS bucket_start, ${aggregate} FROM (${base}) AS samples GROUP BY bucket_start ORDER BY bucket_start`;
+        return {
+          from: start.toISOString(),
+          to: end.toISOString(),
+          summary: summary[0]!,
+          series: series.map((s) => ({ ...s, bucket_start: s.bucket_start.toISOString() })),
+        };
+      };
+      return {
+        ...(await period(from, to)),
+        metric: q.metric,
+        unit: metric.unit,
+        time_basis: q.time_basis,
+        adc_bits: profiles[0] ?? null,
+        source_kind: device.sourceKind,
+        uses_rollups: usesRollups,
+        previous: q.compare ? await period(previousFrom, from) : null,
+      };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+  );
+}
+
 export function registerAnalytics(router: Router, { db, reply }: FeatureContext) {
   async function requireDevice(id: string) {
     const device = await db.device.findUnique({ where: { id } });
@@ -101,132 +232,7 @@ export function registerAnalytics(router: Router, { db, reply }: FeatureContext)
   router.get('/devices/:id/analytics', async (req, res) => {
     const device = await requireDevice(z.uuid().parse(req.params.id));
     const q = analyticsQuerySchema.parse(req.query);
-    const from = new Date(q.from!);
-    const to = new Date(q.to!);
-    const duration = to.getTime() - from.getTime();
-    const previousFrom = new Date(from.getTime() - duration);
-    const metric = metrics[q.metric];
-    const time = q.time_basis === 'sampled' ? Prisma.sql`sampled_at` : Prisma.sql`received_at`;
-    const resolution = q.bucket === 'minute' ? 'minute' : 'hour';
-    const rollupInterval = resolution === 'minute' ? 60000 : 3600000;
-    const sqlBase = (start: Date, end: Date) => Prisma.sql`
-      SELECT ${time} AS t, 1 AS total_count,
-        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') AND ${metric.value} IS NOT NULL THEN 1 ELSE 0 END AS valid_count,
-        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') THEN ${metric.value}::double precision ELSE NULL END AS value_sum,
-        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') THEN ${metric.value}::double precision ELSE NULL END AS minimum,
-        CASE WHEN ${metric.quality} IN ('valid', 'uncalibrated') THEN ${metric.value}::double precision ELSE NULL END AS maximum,
-        COALESCE(${metric.profile},0) AS profile
-      FROM sensor_readings
-      WHERE device_id = ${device.id}::uuid AND ${time} >= ${start} AND ${time} < ${end}
-        ${q.adc_bits === undefined ? Prisma.empty : Prisma.sql`AND ${metric.profile} = ${q.adc_bits}`}
-      UNION ALL SELECT bucket_start, total_count, valid_count, value_sum, minimum, maximum, adc_bits
-      FROM sensor_rollups WHERE device_id = ${device.id}::uuid AND resolution = ${resolution} AND time_basis = ${q.time_basis} AND metric = ${q.metric}
-      AND bucket_start >= ${start} AND bucket_start < ${end}
-      ${q.adc_bits === undefined ? Prisma.empty : Prisma.sql`AND adc_bits = ${q.adc_bits}`}`;
-    const aggregate = Prisma.sql`COALESCE(SUM(total_count),0)::int AS total_count,
-      COALESCE(SUM(valid_count),0)::int AS valid_count,
-      COALESCE(SUM(total_count-valid_count),0)::int AS invalid_count,
-      MIN(minimum) AS min, MAX(maximum) AS max,
-      SUM(value_sum) / NULLIF(SUM(valid_count),0) AS average`;
-    const result = await db.$transaction(
-      async (tx) => {
-        let usesRollups = false;
-        for (const [start, end] of q.compare
-          ? [
-              [previousFrom, from],
-              [from, to],
-            ]
-          : [[from, to]]) {
-          const rolled = await tx.sensorRollup.count({
-            where: {
-              deviceId: device.id,
-              resolution,
-              timeBasis: q.time_basis,
-              metric: q.metric,
-              bucketStart: {
-                gte: new Date(Math.floor(start!.getTime() / rollupInterval) * rollupInterval),
-                lt: end!,
-              },
-            },
-          });
-          usesRollups ||= rolled > 0;
-          if (rolled && (start!.getTime() % rollupInterval || end!.getTime() % rollupInterval))
-            throw new ApiError(
-              422,
-              'ROLLUP_ALIGNMENT_REQUIRED',
-              `Dữ liệu đã tổng hợp: chọn from/to đúng đầu ${resolution === 'minute' ? 'phút' : 'giờ'} UTC hoặc chọn bucket nhỏ hơn nếu còn dữ liệu.`,
-            );
-          if (q.bucket === 'minute') {
-            const expiredMinutes = await tx.sensorRollup.findFirst({
-              where: {
-                deviceId: device.id,
-                resolution: 'hour',
-                timeBasis: q.time_basis,
-                metric: q.metric,
-                bucketStart: { gte: start!, lt: end! },
-              },
-              orderBy: { bucketStart: 'asc' },
-            });
-            if (
-              expiredMinutes &&
-              !(await tx.sensorRollup.findFirst({
-                where: {
-                  deviceId: device.id,
-                  resolution: 'minute',
-                  timeBasis: q.time_basis,
-                  metric: q.metric,
-                  bucketStart: {
-                    gte: expiredMinutes.bucketStart,
-                    lt: new Date(expiredMinutes.bucketStart.getTime() + 3600000),
-                  },
-                },
-              }))
-            )
-              throw new ApiError(
-                422,
-                'ROLLUP_RESOLUTION_UNAVAILABLE',
-                'Dữ liệu phút đã hết hạn. Chọn bucket giờ/ngày.',
-              );
-          }
-        }
-        const profileRows = await tx.$queryRaw<
-          { profiles: number[] | null }[]
-        >`SELECT ARRAY_AGG(DISTINCT profile) FILTER (WHERE profile IS NOT NULL) AS profiles FROM (${sqlBase(q.compare ? previousFrom : from, to)}) AS all_samples`;
-        const profiles = (profileRows[0]?.profiles ?? []).filter((p) => p !== 0);
-        if (profiles.length > 1)
-          throw new ApiError(
-            409,
-            'INCOMPATIBLE_ADC_PROFILES',
-            'Không gộp ADC khác độ phân giải. Chọn adc_bits cụ thể.',
-          );
-        const period = async (start: Date, end: Date) => {
-          const base = sqlBase(start, end);
-          const summary = await tx.$queryRaw<
-            Stats[]
-          >`SELECT ${aggregate} FROM (${base}) AS samples`;
-          const series = await tx.$queryRaw<
-            (Stats & { bucket_start: Date })[]
-          >`SELECT date_trunc(${q.bucket}, t, 'UTC') AS bucket_start, ${aggregate} FROM (${base}) AS samples GROUP BY bucket_start ORDER BY bucket_start`;
-          return {
-            from: start.toISOString(),
-            to: end.toISOString(),
-            summary: summary[0]!,
-            series: series.map((s) => ({ ...s, bucket_start: s.bucket_start.toISOString() })),
-          };
-        };
-        return {
-          ...(await period(from, to)),
-          metric: q.metric,
-          unit: metric.unit,
-          time_basis: q.time_basis,
-          adc_bits: profiles[0] ?? null,
-          source_kind: device.sourceKind,
-          uses_rollups: usesRollups,
-          previous: q.compare ? await period(previousFrom, from) : null,
-        };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
-    );
+    const result = await deviceAnalytics(db, device.id, q);
     reply(res, result);
   });
   router.get('/devices/:id/readings/export', async (req, res) => {

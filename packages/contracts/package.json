@@ -2,5 +2,8 @@
   "name": "@iot/contracts",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts"
+  "exports": {
+    ".": "./src/index.ts",
+    "./freshness": "./src/freshness.ts"
+  }
 }

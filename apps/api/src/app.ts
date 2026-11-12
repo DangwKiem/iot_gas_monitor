@@ -22,8 +22,9 @@ import { registerDeviceTransport, registerDevices } from './modules/devices.js';
 import { registerAlertTransport, registerAlerts } from './modules/alerts.js';
 import { registerAnalytics } from './modules/analytics.js';
 import { registerUsers } from './modules/users.js';
-import type { AlertNotifier } from './modules/notifications.js';
+import type { AlertNotifier, ConnectivityNotifier } from './modules/notifications.js';
 import { registerPushSubscriptions } from './modules/push-subscriptions.js';
+import { registerTelegramLinks } from './modules/telegram-links.js';
 import type { WebPushConfig } from './modules/web-push.js';
 
 export function createApp({
@@ -36,7 +37,9 @@ export function createApp({
   onFailure = () => {},
   onEvent = () => {},
   notify,
+  notifyConnectivity,
   webPush,
+  telegramBotKey,
 }: {
   db: Database;
   origin: string;
@@ -47,7 +50,9 @@ export function createApp({
   onFailure?: (entry: { request_id: string; code: string }) => void;
   onEvent?: (type: string, deviceId: string) => void;
   notify?: AlertNotifier;
+  notifyConnectivity?: ConnectivityNotifier;
   webPush?: WebPushConfig;
+  telegramBotKey?: string;
 }) {
   const app = express();
   const origins = allowedWebOrigins(origin);
@@ -152,7 +157,7 @@ export function createApp({
     const input = telemetrySchema.parse(req.body);
     if (input.device_id !== key.deviceId)
       throw new ApiError(403, 'DEVICE_MISMATCH', 'Key không thuộc thiết bị này.');
-    const result = await ingest(db, key.keyId, input, notify);
+    const result = await ingest(db, key.keyId, input, notify, notifyConnectivity);
     reply(res, { accepted: result.accepted });
     if (result.created.length > 0) {
       onTelemetry(input.device_id);
@@ -163,8 +168,8 @@ export function createApp({
   });
 
   const transport = express.Router();
-  registerDeviceTransport(transport, { db, reply, publish: onEvent });
-  registerAlertTransport(transport, { db, reply, publish: onEvent, notify });
+  registerDeviceTransport(transport, { db, reply, publish: onEvent, notifyConnectivity });
+  registerAlertTransport(transport, { db, reply, publish: onEvent, notify, notifyConnectivity });
   app.use('/api/v1', transport);
 
   app.use('/api/v1', async (req, res, next) => {
@@ -196,12 +201,13 @@ export function createApp({
     next();
   };
   const features = express.Router();
-  const context = { db, reply, admin, operator, publish: onEvent, notify };
+  const context = { db, reply, admin, operator, publish: onEvent, notify, notifyConnectivity };
   registerDevices(features, context);
   registerAlerts(features, context);
   registerAnalytics(features, context);
   registerUsers(features, context, onLogout);
   registerPushSubscriptions(features, context, webPush);
+  registerTelegramLinks(features, context, telegramBotKey);
   app.use('/api/v1', features);
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint không tồn tại.')));
   const errors: ErrorRequestHandler = (error: unknown, _req, res, _next) => {

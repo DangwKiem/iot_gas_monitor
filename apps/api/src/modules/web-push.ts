@@ -1,4 +1,5 @@
 import type { Database } from '@iot/database';
+import { incidentPresentation } from './incident-service.js';
 import type { AlertNotifier } from './notifications.js';
 import { randomUUID } from 'node:crypto';
 import { sendWebPush } from './web-push-client.js';
@@ -12,10 +13,13 @@ export type PushPayload = {
   incident_id: string;
   simulator: boolean;
   ended: boolean;
+  acknowledged?: boolean;
+  uncertain?: boolean;
   url: string;
 };
 export function webPushNotifier(): AlertNotifier {
-  return async (tx, incident) => {
+  return async (tx, incident, transition) => {
+    if (transition === 'ended') return;
     if (!['warning', 'critical'].includes(incident.severity)) return;
     const now = new Date();
     // Lock candidate subscriptions until enqueue commits so concurrent logout
@@ -102,11 +106,26 @@ export async function deliverWebPush(
   if (!row) return { processed: false as const };
   // Payload deliberately contains no name, location, readings, email or endpoint:
   // a provider can deliver a previously accepted notification after logout.
+  const latest = await db.alertIncident.findUniqueOrThrow({
+    where: { id: row.incidentId },
+    include: { device: true, states: true, acknowledgement: true },
+  });
+  const presentation = incidentPresentation(latest);
   const payload: PushPayload = {
-    severity: row.severity,
+    severity:
+      latest.status === 'ended' ? 'resolved' : (presentation.currentSeverity ?? latest.severity),
     incident_id: row.incidentId,
-    simulator: row.incident.device.sourceKind === 'simulator',
-    ended: row.incident.status === 'ended',
+    simulator: latest.device.sourceKind === 'simulator',
+    ended: latest.status === 'ended',
+    acknowledged: !!latest.acknowledgement,
+    uncertain:
+      latest.status !== 'ended' &&
+      (!presentation.currentSeverity ||
+        latest.device.connectivity !== 'online' ||
+        !latest.device.lastSeenAt ||
+        latest.device.lastSeenAt.getTime() +
+          Math.max(30000, latest.device.reportingIntervalMs * 3) <=
+          now.getTime()),
     url: `/app/alerts/${row.incidentId}`,
   };
   const current = await db.webPushSubscription.findUnique({

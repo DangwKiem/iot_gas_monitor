@@ -23,7 +23,11 @@ export async function runMaintenance(
       const statusCutoff = new Date(now.getTime() - 365 * 86400000);
       const eligibleAudit = await tx.auditLog.count({ where: { createdAt: { lt: auditCutoff } } });
       const eligibleStatus = await tx.deviceStatusHistory.count({
-        where: { detectedAt: { lt: statusCutoff } },
+        where: {
+          detectedAt: { lt: statusCutoff },
+          telegramNotification: { is: null },
+          botDeliveries: { none: {} },
+        },
       });
       const preview = {
         eligible: count!.n,
@@ -80,7 +84,7 @@ export async function runMaintenance(
       const prunedAudit =
         await tx.$executeRaw`DELETE FROM audit_logs WHERE id IN (SELECT id FROM audit_logs WHERE created_at < ${auditCutoff} ORDER BY id LIMIT ${batchSize})`;
       const prunedStatus =
-        await tx.$executeRaw`DELETE FROM device_status_history WHERE id IN (SELECT id FROM device_status_history WHERE detected_at < ${statusCutoff} ORDER BY id LIMIT ${batchSize})`;
+        await tx.$executeRaw`DELETE FROM device_status_history WHERE id IN (SELECT id FROM device_status_history WHERE detected_at < ${statusCutoff} AND NOT EXISTS (SELECT 1 FROM telegram_notifications n WHERE n.status_history_id=device_status_history.id) AND NOT EXISTS (SELECT 1 FROM telegram_bot_deliveries b WHERE b.status_history_id=device_status_history.id) ORDER BY id LIMIT ${batchSize})`;
       // Incidents/events/acknowledgements remain intact: safety history is never
       // automatically cascaded away, even when older than the planned minimum.
       await tx.auditLog.create({

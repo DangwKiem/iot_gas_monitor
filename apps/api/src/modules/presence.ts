@@ -1,5 +1,6 @@
 import type { Database } from '@iot/database';
 import type { Device, Prisma } from '@prisma/client';
+import type { ConnectivityNotifier } from './notifications.js';
 import { ApiError } from '../lib/errors.js';
 
 export async function markSeen(
@@ -7,6 +8,7 @@ export async function markSeen(
   device: Device,
   now: Date,
   keyId: string,
+  notify?: ConnectivityNotifier,
 ) {
   const key = await tx.deviceCredential.findUnique({ where: { keyId } });
   if (
@@ -18,7 +20,7 @@ export async function markSeen(
     throw new ApiError(401, 'INVALID_DEVICE_KEY', 'Credential đã hết hiệu lực.');
   if (device.archivedAt) throw new ApiError(403, 'DEVICE_ARCHIVED', 'Thiết bị đang lưu trữ.');
   if (device.connectivity !== 'online') {
-    await tx.deviceStatusHistory.create({
+    const history = await tx.deviceStatusHistory.create({
       data: {
         deviceId: device.id,
         previousStatus: device.connectivity,
@@ -28,6 +30,7 @@ export async function markSeen(
         reason: 'authenticated_contact',
       },
     });
+    if (device.connectivity === 'offline') await notify?.(tx, history);
   }
   await tx.device.update({
     where: { id: device.id },
@@ -36,7 +39,11 @@ export async function markSeen(
   await tx.deviceCredential.update({ where: { keyId }, data: { lastUsedAt: now } });
 }
 
-export async function reconcileOffline(db: Database, now = new Date()) {
+export async function reconcileOffline(
+  db: Database,
+  now = new Date(),
+  notify?: ConnectivityNotifier,
+) {
   const candidates = await db.device.findMany({
     where: {
       connectivity: 'online',
@@ -61,7 +68,7 @@ export async function reconcileOffline(db: Database, now = new Date()) {
       )
         return false;
       await tx.device.update({ where: { id: current.id }, data: { connectivity: 'offline' } });
-      await tx.deviceStatusHistory.create({
+      const history = await tx.deviceStatusHistory.create({
         data: {
           deviceId: current.id,
           previousStatus: 'online',
@@ -73,6 +80,7 @@ export async function reconcileOffline(db: Database, now = new Date()) {
           reason: 'heartbeat_timeout',
         },
       });
+      await notify?.(tx, history);
       return true;
     });
     if (didChange) changed.push(candidate.id);

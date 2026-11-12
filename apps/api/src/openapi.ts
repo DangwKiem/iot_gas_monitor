@@ -76,6 +76,18 @@ export const openapi = {
       'AirGuard API: thiết bị, cấu hình ngưỡng ADC, telemetry, cảnh báo Warning/Critical, lịch sử, analytics và CSV. Web dùng cookie HttpOnly; request ghi cần X-Requested-With: AirGuard và Origin thuộc allowlist. Thiết bị xác thực bằng DeviceKey. Khoảng lọc [from,to) tối đa 90 ngày; chi tiết tại docs/api/monitoring.md.',
   },
   paths: {
+    '/api/v1/telegram/link': {
+      get: operation('Trạng thái liên kết Telegram của tài khoản hiện tại'),
+      delete: {
+        ...operation('Hủy liên kết Telegram và vô hiệu hóa menu cũ'),
+        responses: { '204': success, ...errors },
+      },
+    },
+    '/api/v1/telegram/link-code': {
+      post: operation(
+        'Tạo mã liên kết một lần, hết hạn sau 5 phút; cần phiên đăng nhập còn hiệu lực',
+      ),
+    },
     '/api/v1/push/config': {
       get: operation('Web Push enabled/public VAPID key; yêu cầu đăng nhập, không trả private key'),
     },

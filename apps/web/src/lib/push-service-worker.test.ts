@@ -48,7 +48,7 @@ it('shows a generic simulator alert with stable tag and does not claim a closed 
       }),
     },
   });
-  expect(w.notifications[0]!.title).toContain('CRITICAL');
+  expect(w.notifications[0]!.title).toContain('RESOLVED');
   expect(w.notifications[0]!.options.body).toContain('MÔ PHỎNG');
   expect(w.notifications[0]!.options.body).toContain('đã kết thúc');
   expect(w.notifications[0]!.options.tag).toContain('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
@@ -74,4 +74,21 @@ it('uses a visible fallback for malformed push and never opens an external notif
   });
   expect(closed).toBe(true);
   expect(w.opened).toEqual(['https://airguard.example/app/alerts']);
+});
+
+it('uses one incident tag across escalation and resolution and exposes acknowledgement without implying resolution', async () => {
+  const w = await worker();
+  const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  for (const payload of [
+    { severity: 'warning' },
+    { severity: 'critical', acknowledged: true },
+    { severity: 'critical', ended: true },
+  ])
+    await w.dispatch('push', {
+      data: { json: () => ({ ...payload, incident_id: id, url: `/app/alerts/${id}` }) },
+    });
+  expect(new Set(w.notifications.map((n) => n.options.tag)).size).toBe(1);
+  expect(w.notifications[1]!.options.body).toContain('chưa kết thúc');
+  expect(w.notifications[1]!.title).toContain('CRITICAL');
+  expect(w.notifications[2]!.title).toContain('RESOLVED');
 });

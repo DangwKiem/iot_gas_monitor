@@ -12,6 +12,7 @@ import {
 import type { FeatureContext } from '../lib/context.js';
 import { ApiError } from '../lib/errors.js';
 import { SESSION_COOKIE } from './auth.js';
+import { unlinkTelegram } from './telegram-links.js';
 
 const view = (u: User) => ({
   id: u.id,
@@ -40,6 +41,7 @@ async function lockUser(tx: Prisma.TransactionClient, id: string) {
 async function revokeSessions(tx: Prisma.TransactionClient, id: string) {
   const sessions = await tx.session.findMany({ where: { userId: id }, select: { id: true } });
   await tx.session.deleteMany({ where: { userId: id } });
+  await unlinkTelegram(tx, id);
   return sessions.map((s) => s.id);
 }
 export function registerUsers(

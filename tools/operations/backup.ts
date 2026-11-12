@@ -205,9 +205,41 @@ export async function restoreDatabase(databaseUrl: string, path: string, passphr
   const restored = createDatabase(databaseUrl);
   try {
     await restored.session.deleteMany();
+    const [telegram] = await restored.$queryRaw<
+      { name: string | null }[]
+    >`SELECT to_regclass('public.telegram_connections')::text AS name`;
+    if (telegram?.name) {
+      await restored.telegramConnection.updateMany({
+        data: {
+          userId: null,
+          selectedDeviceId: null,
+          callbackToken: '',
+          callbackExpiresAt: null,
+          actions: [],
+          view: { screen: 'menu' },
+          pending: false,
+        },
+      });
+      await restored.telegramBotCursor.updateMany({ data: { leaseToken: null, leaseUntil: null } });
+    }
     const [outbox] = await restored.$queryRaw<
       { name: string | null }[]
     >`SELECT to_regclass('public.telegram_notifications')::text AS name`;
+    const [personal] = await restored.$queryRaw<
+      { name: string | null }[]
+    >`SELECT to_regclass('public.telegram_bot_deliveries')::text AS name`;
+    if (personal?.name) {
+      await restored.$executeRaw`UPDATE telegram_connections SET link_version=gen_random_uuid(),tracked_device_id=NULL,report_frequency='off',next_report_at=NULL,photo_message_id=NULL,query_allowed_at=NULL`;
+      await restored.telegramBotDelivery.updateMany({
+        where: { status: { in: ['pending', 'sending'] } },
+        data: {
+          status: 'failed',
+          leaseToken: null,
+          leaseUntil: null,
+          lastErrorCode: 'RESTORE_REVIEW_REQUIRED',
+        },
+      });
+    }
     if (outbox?.name)
       await restored.telegramNotification.updateMany({
         where: { status: { in: ['pending', 'sending'] } },

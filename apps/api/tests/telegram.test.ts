@@ -126,7 +126,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('durable Telegram notifications'
     expect(results.every((r) => r.processed)).toBe(true);
     expect(new Set(results.flatMap((r) => (r.processed ? [r.notificationId] : []))).size).toBe(2);
     expect(messages).toHaveLength(2);
-    expect(messages.every((text) => text.includes('MÔ PHỎNG') && text.includes('Sự cố'))).toBe(
+    expect(messages.every((text) => text.includes('MÔ PHỎNG') && text.includes('Thiết bị'))).toBe(
       true,
     );
     const third = await db.telegramNotification.findFirstOrThrow({ where: { status: 'pending' } });
@@ -144,11 +144,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('durable Telegram notifications'
     expect(retry.status).toBe('pending');
     expect(retry.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(now.getTime() + 30000);
     expect(retry.lastErrorCode).toBe('TELEGRAM_RATE_LIMITED');
-    await deliverTelegramNotification(
-      db,
-      async () => ({ ok: true }),
-      new Date(now.getTime() + 31000),
-    );
     // An unsent row can be recovered by a fresh worker after lease expiry.
     await db.telegramNotification.updateMany({
       where: { status: 'pending' },
@@ -163,7 +158,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('durable Telegram notifications'
       async () => ({ ok: true }),
       new Date(now.getTime() + 32000),
     );
-    expect(await db.telegramNotification.count({ where: { status: 'sent' } })).toBe(4);
+    expect(await db.telegramNotification.count({ where: { status: 'sent' } })).toBe(3);
   });
   it('keeps the outbox atomic when a later condition conflicts after another notification was queued', async () => {
     const other = await featureFixture(db, app, 'telegram-condition-conflict');
@@ -323,8 +318,238 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('durable Telegram notifications'
       false,
     );
     expect(result.processed).toBe(true);
-    expect(text).toContain('WARNING');
+    expect(text).toContain('🟠 <b>WARNING — CẢNH BÁO</b>');
     expect(text).toContain('Telegram physical fixture');
     expect(text).not.toContain('MÔ PHỎNG');
+  });
+
+  it('delivers a new warning, critical escalation and resolution once each through telemetry', async () => {
+    const scenarioApp = createApp(options);
+    const device = await featureFixture(db, scenarioApp, 'telegram-lifecycle');
+    const post = (seq: number, gas: 'warning' | 'critical' | 'normal') => {
+      const p = device.payload(seq);
+      p.readings[0]!.alert_snapshot.gas = gas;
+      return request(scenarioApp)
+        .post('/api/v1/device/telemetry')
+        .set(device.deviceHeaders)
+        .send(p);
+    };
+    const messages: string[] = [];
+    const deliver = () =>
+      deliverTelegramNotification(db, async (text) => {
+        messages.push(text);
+        return { ok: true };
+      });
+    expect((await post(1, 'warning')).status).toBe(200);
+    expect((await post(1, 'warning')).status).toBe(200);
+    await deliver();
+    expect(messages[0]).toContain('🟠 <b>WARNING — CẢNH BÁO</b>');
+    expect((await post(2, 'critical')).status).toBe(200);
+    expect((await post(2, 'critical')).status).toBe(200);
+    await deliver();
+    expect(messages[1]).toContain('🔴 <b>CRITICAL — NGUY HIỂM</b>');
+    expect(messages[1]).toContain('Tăng lên mức nguy hiểm');
+    expect((await post(3, 'normal')).status).toBe(200);
+    expect((await post(3, 'normal')).status).toBe(200);
+    await deliver();
+    expect(messages[2]).toContain('✅ <b>RESOLVED — ĐÃ KẾT THÚC</b>');
+    expect(messages[2]).not.toContain('thông báo trễ');
+    expect((await deliver()).processed).toBe(false);
+    const incident = await db.alertIncident.findFirstOrThrow({
+      where: { deviceId: device.deviceId, condition: 'gas' },
+    });
+    expect(incident).toMatchObject({ severity: 'critical', status: 'ended' });
+    const jobs = await db.telegramNotification.findMany({ where: { incidentId: incident.id } });
+    expect(jobs.map((j) => j.severity).sort()).toEqual(['critical', 'resolved', 'warning']);
+    expect(jobs.every((j) => j.status === 'sent')).toBe(true);
+    expect(messages.join('')).not.toContain(incident.id);
+    expect(messages.join('')).not.toContain(device.deviceId);
+  });
+
+  async function queued(severities: string[], ended = false) {
+    const device = await db.device.create({
+      data: { name: 'IOT_Gas_Monitor', sourceKind: 'physical' },
+    });
+    const incident = await db.alertIncident.create({
+      data: {
+        deviceId: device.id,
+        condition: 'co',
+        severity: severities.includes('critical') ? 'critical' : 'warning',
+        origin: 'event',
+        status: ended ? 'ended' : 'active',
+        startedAt: new Date(),
+        endedAt: ended ? new Date() : null,
+      },
+    });
+    await db.telegramNotification.createMany({
+      data: severities.map((severity) => ({
+        incidentId: incident.id,
+        severity,
+        expiresAt: new Date(Date.now() + 3600000),
+      })),
+    });
+    return incident;
+  }
+
+  it('coalesces unsent warning/critical/resolved rows into one historical resolution, including concurrent workers', async () => {
+    const incident = await queued(['warning', 'critical', 'resolved'], true);
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const messages: string[] = [];
+    const first = deliverTelegramNotification(db, async (text) => {
+      messages.push(text);
+      started();
+      await gate;
+      return { ok: true };
+    });
+    await entered;
+    const second = await deliverTelegramNotification(db, async () => {
+      throw new Error('Concurrent duplicate');
+    });
+    expect(second.processed).toBe(false);
+    release();
+    await first;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain('Đã kết thúc · thông báo trễ');
+    expect(messages[0]).not.toContain('Đang diễn ra');
+    const jobs = await db.telegramNotification.findMany({ where: { incidentId: incident.id } });
+    expect(jobs.filter((j) => j.status === 'sent')).toHaveLength(1);
+    expect(jobs.filter((j) => j.lastErrorCode === 'COVERED_BY_RESOLVED')).toHaveLength(2);
+    expect((await deliverTelegramNotification(db, async () => ({ ok: true }))).processed).toBe(
+      false,
+    );
+  });
+
+  it('prioritizes a queued critical escalation over its older warning without losing either record', async () => {
+    const incident = await queued(['warning', 'critical']);
+    let message = '';
+    await deliverTelegramNotification(db, async (text) => {
+      message = text;
+      return { ok: true };
+    });
+    expect(message).toContain('🔴 <b>CRITICAL — NGUY HIỂM</b>');
+    expect(message).toContain('Tăng lên mức nguy hiểm');
+    const jobs = await db.telegramNotification.findMany({ where: { incidentId: incident.id } });
+    expect(jobs.find((j) => j.severity === 'critical')?.status).toBe('sent');
+    expect(jobs.find((j) => j.severity === 'warning')?.lastErrorCode).toBe('COVERED_BY_CRITICAL');
+  });
+
+  it('keeps covered rows pending after failure and refreshes incident state before retry', async () => {
+    const incident = await queued(['warning', 'critical']);
+    const messages: string[] = [];
+    const failed = await deliverTelegramNotification(db, async (text) => {
+      messages.push(text);
+      throw new Error('Network interrupted');
+    });
+    expect(failed).toMatchObject({
+      processed: true,
+      status: 'pending',
+      code: 'TELEGRAM_NETWORK_ERROR',
+    });
+    expect(
+      await db.telegramNotification.count({
+        where: { incidentId: incident.id, status: 'pending' },
+      }),
+    ).toBe(2);
+    await db.$transaction(async (tx) => {
+      const ended = await tx.alertIncident.update({
+        where: { id: incident.id },
+        data: { status: 'ended', endedAt: new Date() },
+      });
+      await telegramNotifier(true)(tx, ended, 'ended');
+    });
+    await deliverTelegramNotification(
+      db,
+      async (text) => {
+        messages.push(text);
+        return { ok: true };
+      },
+      new Date(Date.now() + 6000),
+    );
+    expect(messages[0]).toContain('🔴');
+    expect(messages[1]).toContain('✅ <b>RESOLVED — ĐÃ KẾT THÚC</b>');
+    expect(messages[1]).not.toContain('Đang diễn ra');
+    expect(
+      await db.telegramNotification.count({ where: { incidentId: incident.id, status: 'sent' } }),
+    ).toBe(1);
+    expect(
+      await db.telegramNotification.count({
+        where: { incidentId: incident.id, status: 'skipped' },
+      }),
+    ).toBe(2);
+  });
+
+  it('queues a historical end-first event once and does not reopen it for late/retried start events', async () => {
+    const scenarioApp = createApp(options);
+    const device = await featureFixture(db, scenarioApp, 'telegram-end-first');
+    const externalId = randomUUID();
+    const end = {
+      event_id: randomUUID(),
+      incident_id: externalId,
+      condition: 'co',
+      severity: 'critical',
+      transition: 'ended',
+      boot_id: device.bootId,
+      boot_counter: '1',
+      seq: '2',
+      occurred_at: new Date(device.base + 10000).toISOString(),
+    };
+    const start = {
+      ...end,
+      event_id: randomUUID(),
+      transition: 'started',
+      seq: '1',
+      occurred_at: new Date(device.base + 5000).toISOString(),
+    };
+    const post = (events: object[]) =>
+      request(scenarioApp)
+        .post('/api/v1/device/events')
+        .set(device.deviceHeaders)
+        .send({ schema_version: 1, device_id: device.deviceId, events });
+    expect((await post([end])).status).toBe(200);
+    let message = '';
+    await deliverTelegramNotification(db, async (text) => {
+      message = text;
+      return { ok: true };
+    });
+    expect(message).toContain('✅ <b>RESOLVED — ĐÃ KẾT THÚC</b>');
+    expect((await post([start, end])).status).toBe(200);
+    expect((await post([start, end])).status).toBe(200);
+    const incident = await db.alertIncident.findUniqueOrThrow({
+      where: { deviceId_externalId: { deviceId: device.deviceId, externalId } },
+    });
+    expect(incident.status).toBe('ended');
+    expect(await db.telegramNotification.count({ where: { incidentId: incident.id } })).toBe(1);
+    expect((await deliverTelegramNotification(db, async () => ({ ok: true }))).processed).toBe(
+      false,
+    );
+  });
+
+  it('does not let a worker with a lost lease mark another notification as covered', async () => {
+    const incident = await queued(['warning', 'critical']);
+    const result = await deliverTelegramNotification(db, async () => {
+      await db.telegramNotification.updateMany({
+        where: { incidentId: incident.id, severity: 'critical' },
+        data: { leaseToken: randomUUID() },
+      });
+      return { ok: true };
+    });
+    expect(result).toMatchObject({ processed: true, status: 'lease_lost' });
+    expect(
+      await db.telegramNotification.count({
+        where: { incidentId: incident.id, status: 'skipped' },
+      }),
+    ).toBe(0);
+    // Leave this intentionally interrupted test job for lease recovery, not other cases.
+    await db.telegramNotification.updateMany({
+      where: { incidentId: incident.id },
+      data: { status: 'failed', lastErrorCode: 'TEST_CLEANUP' },
+    });
   });
 });

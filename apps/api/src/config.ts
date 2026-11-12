@@ -19,6 +19,7 @@ export function parseConfig(env: Record<string, string | undefined>) {
       PORT: z.coerce.number().int().min(1).max(65535).default(4000),
       LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
       TELEGRAM_ENABLED: z.enum(['true', 'false']).default('false'),
+      TELEGRAM_BOT_ENABLED: z.enum(['true', 'false']).default('false'),
       TELEGRAM_BOT_TOKEN: z.string().optional(),
       TELEGRAM_CHAT_ID: z.string().optional(),
       TELEGRAM_INCLUDE_SIMULATORS: z.enum(['true', 'false']).default('false'),
@@ -29,7 +30,7 @@ export function parseConfig(env: Record<string, string | undefined>) {
     })
     .superRefine((value, ctx) => {
       if (
-        value.TELEGRAM_ENABLED === 'true' &&
+        (value.TELEGRAM_ENABLED === 'true' || value.TELEGRAM_BOT_ENABLED === 'true') &&
         !/^\d{5,20}:[A-Za-z0-9_-]{30,100}$/.test(value.TELEGRAM_BOT_TOKEN ?? '')
       )
         ctx.addIssue({
@@ -94,6 +95,8 @@ export function parseConfig(env: Record<string, string | undefined>) {
             subject: input.WEB_PUSH_VAPID_SUBJECT!,
           }
         : undefined,
+    telegramBot:
+      input.TELEGRAM_BOT_ENABLED === 'true' ? { token: input.TELEGRAM_BOT_TOKEN! } : undefined,
     telegram:
       input.TELEGRAM_ENABLED === 'true'
         ? {

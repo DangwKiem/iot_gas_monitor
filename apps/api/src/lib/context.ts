@@ -2,7 +2,7 @@ import type { RequestHandler, Response } from 'express';
 import type { Database } from '@iot/database';
 import type { Prisma } from '@prisma/client';
 import { ApiError } from './errors.js';
-import type { AlertNotifier } from '../modules/notifications.js';
+import type { AlertNotifier, ConnectivityNotifier } from '../modules/notifications.js';
 
 export type FeatureContext = {
   db: Database;
@@ -11,6 +11,7 @@ export type FeatureContext = {
   operator: RequestHandler;
   publish: (type: string, deviceId: string) => void;
   notify?: AlertNotifier;
+  notifyConnectivity?: ConnectivityNotifier;
 };
 export async function audit(
   tx: Prisma.TransactionClient,

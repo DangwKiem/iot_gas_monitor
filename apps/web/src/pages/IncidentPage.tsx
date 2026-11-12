@@ -3,7 +3,13 @@ import { Link, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { IncidentDetail, UserView } from '@iot/contracts';
 import { api } from '../lib/api.js';
-import { PageTitle, LoadState, dateText, conditionText } from '../components/FeatureUI.js';
+import {
+  PageTitle,
+  LoadState,
+  dateText,
+  conditionText,
+  IncidentLevelBadge,
+} from '../components/FeatureUI.js';
 
 export default function IncidentPage({ user }: { user: UserView }) {
   const { id } = useParams();
@@ -50,9 +56,7 @@ export default function IncidentPage({ user }: { user: UserView }) {
               <span className={`badge ${incident.status === 'active' ? 'danger' : ''}`}>
                 {incident.status === 'active' ? 'Chưa kết thúc' : 'Đã kết thúc'}
               </span>
-              <span className={`badge level-${incident.severity}`}>
-                {incident.severity === 'critical' ? 'Critical · Nguy cấp' : 'Warning · Cảnh báo'}
-              </span>
+              <IncidentLevelBadge incident={incident} />
               {incident.source_kind === 'simulator' ? (
                 <span className="badge simulation">Dữ liệu mô phỏng</span>
               ) : null}
@@ -112,7 +116,9 @@ export default function IncidentPage({ user }: { user: UserView }) {
                       ? 'Bắt đầu'
                       : event.transition === 'escalated'
                         ? 'Nâng mức Critical'
-                        : 'Kết thúc'}
+                        : event.transition === 'deescalated'
+                          ? 'Giảm về Warning'
+                          : 'Kết thúc'}
                   </strong>
                   <p>Thời điểm xảy ra: {dateText(event.occurred_at)}</p>
                   <small>Ghi nhận: {dateText(event.received_at)}</small>

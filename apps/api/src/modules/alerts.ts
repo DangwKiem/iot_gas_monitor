@@ -8,9 +8,16 @@ import {
   type DeviceEvent,
 } from '@iot/contracts';
 import { ApiError } from '../lib/errors.js';
-import { audit, lockDevice, type FeatureContext } from '../lib/context.js';
+import { lockDevice, type FeatureContext } from '../lib/context.js';
 import { authenticateDevice, hashSecret } from './auth.js';
 import { markSeen } from './presence.js';
+import {
+  includeIncident,
+  incidentView,
+  incidentPresentation,
+  listIncidentPage,
+  acknowledgeIncident,
+} from './incident-service.js';
 import type { AlertNotifier } from './notifications.js';
 
 type Tx = Prisma.TransactionClient;
@@ -49,11 +56,16 @@ async function updateState(
 async function snapshotEvent(
   tx: Tx,
   incident: AlertIncident,
-  transition: 'started' | 'ended' | 'escalated',
+  transition: 'started' | 'ended' | 'escalated' | 'deescalated',
   record: Reading,
   now: Date,
+  severity = incident.severity,
 ) {
-  if (await tx.alertEvent.findFirst({ where: { incidentId: incident.id, transition } })) return;
+  if (
+    ['started', 'ended'].includes(transition) &&
+    (await tx.alertEvent.findFirst({ where: { incidentId: incident.id, transition } }))
+  )
+    return;
   const payload = {
     transition,
     condition: incident.condition,
@@ -61,7 +73,7 @@ async function snapshotEvent(
     seq: record.seq,
     sampled_at: record.sampled_at,
     origin: 'snapshot',
-    severity: incident.severity,
+    severity,
   };
   await tx.alertEvent.create({
     data: {
@@ -157,6 +169,21 @@ export async function applySnapshot(
         await snapshotEvent(tx, incident, 'escalated', record, now);
         await notify?.(tx, incident);
         eventsChanged = true;
+      } else if (
+        current?.incidentId === incident.id &&
+        ['warning', 'critical'].includes(current.state) &&
+        current.state !== severity
+      ) {
+        await snapshotEvent(
+          tx,
+          incident,
+          severity === 'critical' ? 'escalated' : 'deescalated',
+          record,
+          now,
+          severity,
+        );
+        if (severity === 'critical') await notify?.(tx, incident);
+        eventsChanged = true;
       }
     } else if (state === 'normal' && incident) {
       if (
@@ -174,6 +201,7 @@ export async function applySnapshot(
         data: { status: 'ended', endedAt: record.sampled_at },
       });
       await snapshotEvent(tx, incident, 'ended', record, now);
+      await notify?.(tx, incident, 'ended');
       eventsChanged = true;
       incident = null;
     }
@@ -303,6 +331,7 @@ async function applyEvent(
   else await tx.alertEvent.create({ data });
   if (isStart || (previousSeverity && previousSeverity !== incident.severity))
     await notify?.(tx, incident);
+  else if (!isStart) await notify?.(tx, incident, 'ended');
   if (currentBootCounter === null || BigInt(event.boot_counter) >= currentBootCounter)
     await updateState(
       tx,
@@ -318,7 +347,13 @@ async function applyEvent(
 
 export function registerAlertTransport(
   router: Router,
-  { db, reply, publish, notify }: Pick<FeatureContext, 'db' | 'reply' | 'publish' | 'notify'>,
+  {
+    db,
+    reply,
+    publish,
+    notify,
+    notifyConnectivity,
+  }: Pick<FeatureContext, 'db' | 'reply' | 'publish' | 'notify' | 'notifyConnectivity'>,
 ) {
   router.post('/device/events', async (req, res) => {
     const key = await authenticateDevice(db, req.headers.authorization);
@@ -338,7 +373,7 @@ export function registerAlertTransport(
           duplicate: await applyEvent(tx, device.id, event, now, device.bootCounter, notify),
         });
       }
-      await markSeen(tx, device, now, key.keyId);
+      await markSeen(tx, device, now, key.keyId, notifyConnectivity);
       return rows;
     });
     reply(res, { accepted });
@@ -349,34 +384,6 @@ export function registerAlertTransport(
   });
 }
 
-const includeIncident = {
-  device: { select: { name: true, sourceKind: true } },
-  acknowledgement: { include: { user: { select: { id: true, email: true } } } },
-} satisfies Prisma.AlertIncidentInclude;
-type IncidentRow = Prisma.AlertIncidentGetPayload<{ include: typeof includeIncident }>;
-function incidentView(i: IncidentRow) {
-  return {
-    id: i.id,
-    external_id: i.externalId,
-    device_id: i.deviceId,
-    device_name: i.device.name,
-    source_kind: i.device.sourceKind,
-    condition: i.condition,
-    severity: i.severity,
-    status: i.status,
-    origin: i.origin,
-    started_at: i.startedAt?.toISOString() ?? null,
-    ended_at: i.endedAt?.toISOString() ?? null,
-    first_observed_at: i.firstObservedAt.toISOString(),
-    acknowledgement: i.acknowledgement
-      ? {
-          acknowledged_at: i.acknowledgement.acknowledgedAt.toISOString(),
-          note: i.acknowledgement.note,
-          user: i.acknowledgement.user,
-        }
-      : null,
-  };
-}
 export function registerAlerts(router: Router, { db, reply, operator, publish }: FeatureContext) {
   router.get('/alerts/states', async (req, res) => {
     const query = z.object({ device_id: z.uuid().optional() }).parse(req.query);
@@ -394,43 +401,17 @@ export function registerAlerts(router: Router, { db, reply, operator, publish }:
         incident_id: s.incidentId,
         updated_at: s.updatedAt.toISOString(),
         unresolved: s.incident?.status === 'active',
-        severity:
-          s.state === 'warning' || s.state === 'critical'
-            ? s.state
-            : (s.incident?.severity ?? null),
+        severity: s.incident
+          ? (incidentPresentation({ ...s.incident, states: [s], acknowledgement: null })
+              .currentSeverity ?? s.incident.severity)
+          : null,
       })),
     );
   });
   router.get('/alerts/incidents', async (req, res) => {
     const q = incidentQuerySchema.parse(req.query);
-    const where: Prisma.AlertIncidentWhereInput = {
-      deviceId: q.device_id,
-      condition: q.condition,
-      severity: q.severity,
-      status: q.status,
-      ...(q.acknowledged
-        ? { acknowledgement: q.acknowledged === 'true' ? { isNot: null } : { is: null } }
-        : {}),
-      ...(q.cursor ? { ordinal: { lt: BigInt(q.cursor) } } : {}),
-      ...(q.from
-        ? {
-            OR: [
-              { startedAt: { gte: new Date(q.from), lt: new Date(q.to!) } },
-              { startedAt: null, firstObservedAt: { gte: new Date(q.from), lt: new Date(q.to!) } },
-            ],
-          }
-        : {}),
-    };
-    const rows = await db.alertIncident.findMany({
-      where,
-      include: includeIncident,
-      orderBy: { ordinal: 'desc' },
-      take: q.limit + 1,
-    });
-    const page = rows.slice(0, q.limit);
-    reply(res, page.map(incidentView), {
-      next_cursor: rows.length > q.limit ? String(page.at(-1)!.ordinal) : null,
-    });
+    const page = await listIncidentPage(db, q);
+    reply(res, page.rows.map(incidentView), { next_cursor: page.nextCursor });
   });
   router.get('/alerts/incidents/:id', async (req, res) => {
     const id = z.uuid().parse(req.params.id);
@@ -460,26 +441,11 @@ export function registerAlerts(router: Router, { db, reply, operator, publish }:
     const input = z
       .strictObject({ note: z.string().trim().max(500).default('') })
       .parse(req.body ?? {});
-    const incident = await db.alertIncident.findUnique({ where: { id } });
-    if (!incident) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy sự cố.');
-    const ack = await db.$transaction(async (tx) => {
-      await lockDevice(tx, incident.deviceId);
-      const existing = await tx.alertAcknowledgement.findUnique({ where: { incidentId: id } });
-      if (existing) return existing;
-      const created = await tx.alertAcknowledgement.create({
-        data: { incidentId: id, userId: res.locals.session.user.id as string, note: input.note },
-      });
-      await audit(
-        tx,
-        res.locals.session.user.id as string,
-        incident.deviceId,
-        'incident.acknowledged',
-        { incident_id: id },
-      );
-      return created;
-    });
+    const { ack, deviceId } = await db.$transaction((tx) =>
+      acknowledgeIncident(tx, id, res.locals.session.user.id as string, input.note),
+    );
     reply(res, { acknowledged_at: ack.acknowledgedAt.toISOString(), note: ack.note });
-    publish('alert.acknowledged', incident.deviceId);
+    publish('alert.acknowledged', deviceId);
   });
   router.get('/alerts/events', async (req, res) => {
     const q = incidentQuerySchema.parse(req.query);

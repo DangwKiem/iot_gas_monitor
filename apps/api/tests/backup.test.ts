@@ -21,8 +21,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encrypted PostgreSQL backup/res
     targetUrl.pathname = `/${name}`;
     const passphrase = randomBytes(32).toString('hex');
     const marker = `restore-${name}@test.local`;
-    await db.user.create({
+    const linkedUser = await db.user.create({
       data: { email: marker, passwordHash: 'not-a-login-password', role: 'viewer' },
+    });
+    const connection = await db.telegramConnection.create({
+      data: {
+        telegramUserId: name,
+        chatId: name,
+        userId: linkedUser.id,
+        reportFrequency: 'daily',
+        nextReportAt: new Date(Date.now() + 3600000),
+      },
+    });
+    const personal = await db.telegramBotDelivery.create({
+      data: {
+        connectionId: name,
+        linkVersion: connection.linkVersion,
+        kind: 'report',
+        eventKey: 'report:restore-test',
+        periodFrom: new Date(Date.now() - 86400000),
+        periodTo: new Date(),
+        expiresAt: new Date(Date.now() + 3600000),
+      },
     });
     const device = await db.device.create({
       data: { name: `Restore ${name}`, sourceKind: 'simulator' },
@@ -48,6 +68,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encrypted PostgreSQL backup/res
       expect(await target.user.findUnique({ where: { email: marker } })).not.toBeNull();
       expect(await target.session.count()).toBe(0);
       expect(
+        (await target.telegramConnection.findUniqueOrThrow({ where: { telegramUserId: name } }))
+          .userId,
+      ).toBeNull();
+      const restoredConnection = await target.telegramConnection.findUniqueOrThrow({
+        where: { telegramUserId: name },
+      });
+      expect(restoredConnection).toMatchObject({ reportFrequency: 'off', nextReportAt: null });
+      expect(restoredConnection.linkVersion).not.toBe(connection.linkVersion);
+      expect(
+        await target.telegramBotDelivery.findUniqueOrThrow({ where: { id: personal.id } }),
+      ).toMatchObject({ status: 'failed', lastErrorCode: 'RESTORE_REVIEW_REQUIRED' });
+      expect(
         await target.telegramNotification.findUniqueOrThrow({ where: { id: notification.id } }),
       ).toMatchObject({ status: 'failed', lastErrorCode: 'RESTORE_REVIEW_REQUIRED' });
       expect(await target.$queryRaw`SELECT 1 FROM sensor_rollups LIMIT 1`).toBeInstanceOf(Array);
@@ -55,6 +87,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encrypted PostgreSQL backup/res
         /trống/,
       );
     } finally {
+      await db.telegramBotDelivery.deleteMany({ where: { id: personal.id } });
       await db.telegramNotification.deleteMany({ where: { id: notification.id } });
       await target.$disconnect();
       await db.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);

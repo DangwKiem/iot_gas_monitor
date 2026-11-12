@@ -13,6 +13,7 @@ const log = pino({
     'authorization',
     'databaseUrl',
     'telegram.token',
+    'telegramBot.token',
     'telegram.chatId',
     'webPush.privateKey',
     'endpoint',
@@ -25,6 +26,7 @@ await db.$connect();
 log.info(
   {
     telegram_enabled: !!config.telegram,
+    telegram_bot_enabled: !!config.telegramBot,
     include_simulators: config.telegram?.includeSimulators ?? false,
     web_push_enabled: !!config.webPush,
   },
@@ -36,6 +38,7 @@ const runtime = createRuntime(db, config.origin, {
   onRequest: (entry) => log.info(entry, 'http_request'),
   onFailure: (entry) => log.error(entry, 'request_failed'),
   telegram: config.telegram,
+  telegramBot: config.telegramBot,
   webPush: config.webPush,
   onNotification: (entry) =>
     entry.code

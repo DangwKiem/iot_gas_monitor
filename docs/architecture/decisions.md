@@ -63,7 +63,13 @@ Incident history không thay thế snapshot mới nhất: cả hai đều phân 
 ## Telegram opt-in v0.4
 
 - Bổ sung theo yêu cầu người dùng: warning/critical notifications qua Telegram. Chỉ backend giữ token/chat ID trong environment; không mở webhook, không gửi secrets ra browser hoặc log.
-- Transactional PostgreSQL outbox unique incident/severity; enqueue cùng incident và chỉ worker đọc sau commit. Telegram không nằm trong đường HTTP ACK ingestion. Không gửi mỗi sample, không gửi khi acknowledge/phục hồi đơn thuần; không đổi ngưỡng/severity phần cứng.
-- Mặc định tắt, simulator mặc định bị loại. Khi bật gửi simulator, plain text có nhãn MÔ PHỎNG và dữ liệu chưa hiệu chuẩn; tắt lại sẽ skip pending simulator jobs.
+- Transactional PostgreSQL outbox unique incident/severity; enqueue cùng incident và chỉ worker đọc sau commit. Telegram không nằm trong đường HTTP ACK ingestion. Không gửi mỗi sample hoặc acknowledge; gửi thêm resolved khi kết thúc (từ 12/11/2026). Không đổi ngưỡng/severity phần cứng.
+- Mặc định tắt, simulator mặc định bị loại. Khi bật gửi simulator, HTML có nhãn MÔ PHỎNG, escape dữ liệu động và không suy diễn nồng độ; tắt lại sẽ skip pending simulator jobs.
 - Worker có lease/reclaim, bounded retry/backoff/429 retry_after, timeout và TTL. Best effort at-least-once: Telegram sendMessage không có idempotency key, vẫn có thể trùng nếu mất ACK hoặc crash sau khi đã gửi.
 - Restore đánh dấu pending/sending jobs `RESTORE_REVIEW_REQUIRED` để không phát lại backup cũ. Xem [runbook](../operations/local-runbook.md#telegram-warningcritical). Chưa xác nhận gửi Telegram thật khi chưa cấu hình bot/chat của người dùng.
+
+## Telegram và incident — lượt 2, 12/11/2026
+
+Tái sử dụng incident/state/ack, presence và PostgreSQL outbox; không thêm broker, dependency hoặc engine xét nguy hiểm. Tách service đọc/ACK dùng chung cho REST và bot; mức hiện tại từ AlertState, mức cao nhất ở incident. ACKNOWLEDGED là cách trình bày acknowledgement, không tạo trạng thái kết thúc giả. Giảm mức/re-escalation có timeline riêng cùng incident; dedup notification vẫn theo incident/severity để hạn chế dao động quanh ngưỡng.
+
+Outbox thêm đích status-history bằng FK nullable và check exactly-one-target. Giữ tham chiếu lịch sử khi maintenance. OFFLINE/ONLINE đi cùng transaction chuyển presence; initial contact không tạo notification. Worker đọc latest presence và incident ngay trước gửi, success-only coalescing, khóa phạm vi incident/device, không thay logic firmware hoặc Web Push enqueue. Telegram không hỗ trợ sendMessage idempotency key nên mất phản hồi sau giao tin vẫn có thể gây trùng; không tuyên bố exactly-once.

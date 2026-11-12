@@ -151,6 +151,8 @@ export type IncidentView = {
   condition: 'gas' | 'co' | 'flame';
   severity: 'warning' | 'critical';
   status: 'active' | 'ended';
+  current_severity?: 'warning' | 'critical' | null;
+  lifecycle?: 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED';
   origin: string;
   started_at: string | null;
   ended_at: string | null;

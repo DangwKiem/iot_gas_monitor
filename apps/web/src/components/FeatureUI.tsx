@@ -1,3 +1,4 @@
+import type { IncidentView } from '@iot/contracts';
 import { userMessage } from '../lib/api.js';
 
 export const dateText = (value: string | null | undefined) =>
@@ -47,4 +48,21 @@ export function LoadState({
       </div>
     );
   return null;
+}
+
+export function IncidentLevelBadge({ incident }: { incident: IncidentView }) {
+  const current = incident.status === 'active' ? incident.current_severity : incident.severity;
+  const level = current === undefined ? incident.severity : current;
+  return (
+    <>
+      <span className={`badge level-${level ?? 'unknown'}`}>
+        {level === 'critical' ? 'Critical' : level === 'warning' ? 'Warning' : 'Chưa xác định'}
+      </span>
+      {incident.status === 'active' && current !== undefined && current !== incident.severity ? (
+        <small className="device-id">
+          Cao nhất: {incident.severity === 'critical' ? 'Critical' : 'Warning'}
+        </small>
+      ) : null}
+    </>
+  );
 }

@@ -118,7 +118,7 @@ Maintenance mặc định dry-run, apply cần backup mã hóa xác thực cùng
 
 ### Telegram v0.4
 
-Warning/critical gửi qua outbox PostgreSQL khi bật `TELEGRAM_ENABLED` và cấu hình bot token/chat ID. Một outbox entry cho mỗi incident/severity, không gửi mỗi sample hoặc acknowledge; simulator phải opt-in riêng. Queue cùng transaction với incident, worker gửi sau commit; lỗi Telegram không đổi ACK ingest. Không thêm REST endpoint hoặc inbound webhook cho bot. Xem [runbook](../operations/local-runbook.md#telegram-warningcritical) cho retry/expiry/secret handling và giới hạn at-least-once.
+Warning/critical gửi qua outbox PostgreSQL khi bật `TELEGRAM_ENABLED` và cấu hình bot token/chat ID. Một outbox entry cho mỗi incident/mức thông báo (warning, critical, resolved), không gửi mỗi sample hoặc acknowledge; simulator phải opt-in riêng. Tin HTML gọn, giờ Việt Nam, đọc lại trạng thái trước mỗi lần gửi; các job đã được bản tóm tắt thành công bao phủ được giữ trong outbox với trạng thái skipped. Queue cùng transaction với incident, worker gửi sau commit; lỗi Telegram không đổi ACK ingest. Không thêm REST endpoint hoặc inbound webhook cho bot. Xem [runbook](../operations/local-runbook.md#telegram-warningcritical) cho retry/expiry/secret handling và giới hạn at-least-once.
 
 Chưa có firmware/HIL, chính sách cảnh báo phần cứng được nghiệm thu, email/SMS, dịch vụ push khác ngoài Telegram hoặc cloud. Không tự cài scheduler OS, không auto-purge DB development và không tự xóa backup. Các kiểm thử local không thay thế soak/load dài hạn hay chứng nhận an toàn.
 
@@ -130,3 +130,20 @@ Chưa có firmware/HIL, chính sách cảnh báo phần cứng được nghiệm
 - `DELETE /api/v1/push/subscription`: idempotent, 204, chỉ phiên hiện tại; browser tự unsubscribe/đóng notifications phía client.
 - Warning/critical enqueue trong transaction incident, unique `(incident_id,severity,subscription_id)`, không backfill. Simulator cần opt-in riêng; ACK/recovery không gửi thông báo riêng. Logout/thu hồi session cascade xóa subscription/delivery; hết phiên và đổi VAPID chặn gửi. Provider có thể giao tin đã nhận sau thu hồi.
 - Retry/lease/TTL và hướng dẫn cấu hình: xem [README](../../README.md#thông-báo-web-push). Endpoint/auth keys chỉ lưu backend, không log; backup phải mã hóa.
+
+### Telegram Bot tương tác — lượt 1
+
+Các endpoint dùng session/bearer và CSRF/Origin như API web hiện có:
+
+- `GET /api/v1/telegram/link`: `enabled`, `linked`, `bot_username`; không trả chat ID hoặc mã liên kết.
+- `POST /api/v1/telegram/link-code`: trả mã một lần và `expires_at`, hiệu lực 5 phút, tối đa 10 lần/phút/tài khoản; bot cần được bật. Mã chỉ được lưu hash và ràng buộc phiên web còn hiệu lực.
+- `DELETE /api/v1/telegram/link`: 204, hủy liên kết/mã chờ/menu cũ. Chỉ thao tác trên tài khoản đang xác thực.
+
+`/start`, `/devices`, `/status`, `/alerts`, `/history`, `/chart`, `/report`, `/settings`, `/link`, `/unlink` chạy trong chat riêng qua long polling; không có REST inbound Telegram công khai. Xem runbook cho cấu hình, quyền nhóm hiện có, retry và phạm vi lượt 1.
+
+### Sự cố và Telegram — lượt 2
+
+- Incident REST thêm `current_severity: warning|critical|null` và `lifecycle: ACTIVE|ACKNOWLEDGED|RESOLVED`. Các trường cũ giữ nguyên: `severity` là mức cao nhất, `status` là active/ended. Current null không phải SAFE. ACK không thay status hoặc snapshot/buzzer.
+- Timeline thêm transition nội bộ `deescalated`; lần tái tăng mức có thêm `escalated`, vẫn cùng Incident ID. Device durable event contract vẫn chỉ `started|ended`, không đổi firmware/API ingestion.
+- Bot `/alerts` và `/history` dùng chung reader/ACK với REST và RBAC một nhóm hiện có. History bot có cửa sổ hoạt động 24 giờ/7 ngày/30 ngày (bắt đầu hoặc kết thúc trong kỳ), device, peak-severity và offset pagination. REST giữ nguyên cursor/date semantics hiện có. Không có endpoint inbound Telegram mới.
+- Outbox Telegram đích duy nhất: incident + warning/critical/resolved hoặc status-history + offline/online. DB check constraint/FK bảo vệ phân loại và unique status-history chống lặp. Presence không thay incident. Cùng worker/lease/retry/TTL, đọc lại trạng thái trước gửi và gộp sau thành công.

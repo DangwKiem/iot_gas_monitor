@@ -55,3 +55,14 @@ it('binds loopback by default and accepts only an exact web origin', () => {
     parseConfig({ DATABASE_URL: 'postgresql://localhost/iot', WEB_ORIGIN: '*' }),
   ).toThrow();
 });
+
+it('enables the interactive bot independently of alert chat ID and requires a valid token', () => {
+  const base = { DATABASE_URL: 'postgresql://localhost/iot', TELEGRAM_BOT_ENABLED: 'true' };
+  expect(() => parseConfig(base)).toThrow();
+  expect(
+    parseConfig({ ...base, TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyz_123456789' }),
+  ).toMatchObject({
+    telegram: undefined,
+    telegramBot: { token: '123456789:abcdefghijklmnopqrstuvwxyz_123456789' },
+  });
+});

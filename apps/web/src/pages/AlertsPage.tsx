@@ -3,7 +3,13 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import type { DeviceView, IncidentView } from '@iot/contracts';
 import { apiPage } from '../lib/api.js';
-import { PageTitle, LoadState, dateText, conditionText } from '../components/FeatureUI.js';
+import {
+  PageTitle,
+  LoadState,
+  dateText,
+  conditionText,
+  IncidentLevelBadge,
+} from '../components/FeatureUI.js';
 
 export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
   const [filters, setFilters] = useState('');
@@ -112,9 +118,7 @@ export default function AlertsPage({ devices }: { devices: DeviceView[] }) {
                   </td>
                   <td>{conditionText[i.condition]}</td>
                   <td>
-                    <span className={`badge level-${i.severity}`}>
-                      {i.severity === 'critical' ? 'Critical' : 'Warning'}
-                    </span>
+                    <IncidentLevelBadge incident={i} />
                   </td>
                   <td>{i.status === 'active' ? 'Chưa kết thúc' : 'Đã kết thúc'}</td>
                   <td>
